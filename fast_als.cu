@@ -200,8 +200,8 @@ void fast_als::solve(
 
 fast_als::features_vector fast_als::calc_g(const features_vector& in_v, int in_size, int _count_features)
 {
-	/*
-	arma::fmat A(in_v);
+
+	/*arma::fmat A(in_v);
 	A.reshape(_count_features, in_size);
 	A = A.t();
 
