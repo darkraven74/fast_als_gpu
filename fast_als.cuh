@@ -9,6 +9,9 @@
 #include <cstdlib>
 #include <random>
 
+#include <cula.h>
+#include <cula_blas.h>
+
 class fast_als {
 public:
 	///
@@ -90,13 +93,13 @@ protected:
 	void solve(
 			const likes_vector::const_iterator& likes,
 			const likes_weights_vector::const_iterator& weights,
-			const features_vector& in_v,
+			features_vector& in_v,
 			int in_size,
 			features_vector& out_v,
 			int out_size,
 			int _count_features);
 
-	fast_als::features_vector calc_g(const features_vector& in_v, int in_size, int _count_features);
+	fast_als::features_vector calc_g(features_vector& in_v, int in_size, int _count_features);
 
 	void calc_ridge_regression(
 			const likes_vector_item& likes,
@@ -145,6 +148,8 @@ private:
 
 	std::vector<std::pair<int, int> > test_set;
 	likes_weights_vector _user_likes_weights_temp;
+
+	culaStatus status;
 };
 
 #endif /* FAST_ALS_CUH_ */

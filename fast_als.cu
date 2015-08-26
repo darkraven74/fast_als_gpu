@@ -6,6 +6,20 @@
 
 #include "fast_als.cuh"
 
+void checkStatus(culaStatus status)
+{
+	char buf[256];
+
+	if(!status)
+		return;
+
+	culaGetErrorInfoString(status, culaGetErrorInfo(), buf, sizeof(buf));
+	printf("%s\n", buf);
+
+	culaShutdown();
+	exit(EXIT_FAILURE);
+}
+
 fast_als::fast_als(std::istream& tuples_stream,
 		int count_features,
 		float alfa,
@@ -22,7 +36,11 @@ fast_als::fast_als(std::istream& tuples_stream,
 		_count_error_samples_for_users(count_error_samples_for_users),
 		_count_error_samples_for_items(count_error_samples_for_items)
 {
-	srand(time(NULL));
+	status = culaInitialize();
+	checkStatus(status);
+
+//	srand(time(NULL));
+	srand(34);
 
 	read_likes(tuples_stream, count_samples, likes_format);
 
@@ -34,7 +52,7 @@ fast_als::fast_als(std::istream& tuples_stream,
 
 fast_als::~fast_als()
 {
-
+	culaShutdown();
 }
 
 void fast_als::read_likes(std::istream& tuples_stream, int count_simples, int format)
@@ -147,7 +165,8 @@ void fast_als::generate_test_set()
 void fast_als::fill_rnd(features_vector& in_v, int in_size)
 {
 	std::cerr << "Generate random features.. ";
-	std::default_random_engine generator(time(NULL));
+//	std::default_random_engine generator(time(NULL));
+	std::default_random_engine generator(34);
 	std::normal_distribution<float> distribution(0, 1);
 
 	for (int i = 0; i < in_size * _count_features; i++)
@@ -176,7 +195,7 @@ void fast_als::calculate(int count_iterations)
 //		std::cout << "==== Iteration time : " << end - start << std::endl;
 
 		//MSE();
-		//hit_rate();
+		hit_rate();
 
 	}
 }
@@ -184,12 +203,13 @@ void fast_als::calculate(int count_iterations)
 void fast_als::solve(
 		const likes_vector::const_iterator& likes,
 		const likes_weights_vector::const_iterator& weights,
-		const features_vector& in_v,
+		features_vector& in_v,
 		int in_size,
 		features_vector& out_v,
 		int out_size,
 		int _count_features)
 {
+
 	fast_als::features_vector g = calc_g(in_v, in_size, _count_features);
 
 	for (int i = 0; i < out_size; i++)
@@ -198,8 +218,41 @@ void fast_als::solve(
 	}
 }
 
-fast_als::features_vector fast_als::calc_g(const features_vector& in_v, int in_size, int _count_features)
+fast_als::features_vector fast_als::calc_g(features_vector& in_v, int in_size, int _count_features)
 {
+	std::vector<float> A(_count_features * _count_features);
+	std::vector<float> U(_count_features * _count_features);
+	std::vector<float> G(_count_features * _count_features);
+	std::vector<float> S(_count_features);
+
+	status = culaSgemm('N', 'T', _count_features, _count_features, in_size, 1.0f, &in_v[0], _count_features,
+			&in_v[0], _count_features, 0.0f, &A[0], _count_features);
+	checkStatus(status);
+
+	status = culaSgesvd('N', 'S', _count_features, _count_features, &A[0], _count_features, &S[0], NULL,
+			_count_features, &U[0], _count_features);
+	checkStatus(status);
+
+	std::vector<float> lam_sqrt(_count_features * _count_features, 0.0);
+
+	for (int i = 0; i < _count_features; i++)
+	{
+		lam_sqrt[i * _count_features + i] = sqrt(S[i]);
+	}
+
+	status = culaSgemm('N', 'N', _count_features, _count_features, _count_features, 1.0f, &lam_sqrt[0], _count_features,
+			&U[0], _count_features, 0.0f, &G[0], _count_features);
+	checkStatus(status);
+
+	for (int i = 0; i < _count_features; i++)
+	{
+		for (int j = 0; j < i; j++)
+		{
+			std::iter_swap(G.begin() + i * _count_features + j, G.begin() + j * _count_features + i);
+		}
+	}
+
+	return G;
 
 	/*arma::fmat A(in_v);
 	A.reshape(_count_features, in_size);
@@ -308,7 +361,54 @@ void fast_als::MSE()
 
 void fast_als::hit_rate()
 {
+	std::vector<float> predict(_count_users * _count_items);
 
+	//predict = P * Q^t
+	//predict = P^t * Q
+	status = culaSgemm('T', 'N', _count_users, _count_items, _count_features, 1.0f, &_features_users[0], _count_features,
+			&_features_items[0], _count_features, 0.0f, &predict[0], _count_users);
+	checkStatus(status);
+
+	for (int i = 0; i < _count_users; i++)
+	{
+		for (unsigned int j = 0; j < _user_likes[i].size(); j++)
+		{
+			int item_id = _user_likes[i][j];
+			predict[item_id * _count_users + i] = -1000000;
+		}
+	}
+
+	std::set<std::pair<int, int> > test_set_set(test_set.begin(), test_set.end());
+
+	std::set<std::pair<int, int> > recs;
+	for (int i = 0; i < _count_users; i++)
+	{
+		std::vector<float> v;
+		for (int j = 0; j < _count_items; j++)
+		{
+			v.push_back(predict[j * _count_users + i]);
+		}
+
+		for (int j = 0; j < 10; j++)
+		{
+			std::vector<float>::iterator it = std::max_element(v.begin(), v.end());
+			int item = std::distance(v.begin(), it);
+			v[item] = -1000000;
+			recs.insert(std::make_pair(i, item));
+		}
+	}
+
+	float tp = 0;
+	for (std::set<std::pair<int, int> >::iterator it = test_set_set.begin(); it != test_set_set.end(); it++)
+	{
+		if (recs.count(*it))
+		{
+			tp++;
+		}
+	}
+	float hr10 = tp * 1.0 / test_set_set.size();
+
+	std::cout << hr10 << std::endl;
 }
 
 
