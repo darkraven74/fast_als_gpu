@@ -11,6 +11,7 @@
 
 #include <cula.h>
 #include <cula_blas.h>
+#include <thrust/device_vector.h>
 
 class fast_als {
 public:
@@ -22,6 +23,10 @@ public:
 	typedef std::vector< std::vector<float> >   likes_weights_vector;
 	typedef std::vector<int> likes_vector_item;
 	typedef std::vector<float> likes_weights_vector_item;
+
+	typedef thrust::device_vector<float> d_features_vector;
+	typedef thrust::device_vector<int>	 d_likes_vector;
+	typedef thrust::device_vector<float> d_likes_weights_vector;
 	///
 	/// Ctor
 	/// Inputs are:
@@ -91,13 +96,15 @@ protected:
 	/// solve one iteration of als
 	///
 	void solve(
-			const likes_vector::const_iterator& likes,
-			const likes_weights_vector::const_iterator& weights,
+			const d_likes_vector& likes,
+			const d_likes_weights_vector& weights,
 			features_vector& in_v,
 			int in_size,
 			features_vector& out_v,
 			int out_size,
-			int _count_features);
+			int _count_features,
+			thrust::device_vector<int>& likes_offsets,
+			thrust::device_vector<int>& likes_sizes);
 
 	fast_als::features_vector calc_g(features_vector& in_v, int in_size, int _count_features);
 
@@ -112,7 +119,20 @@ protected:
 			features_vector& g,
 			int id);
 
+	void calc_ridge_regression_gpu(
+			const d_likes_vector& likes,
+			const d_likes_weights_vector& weights,
+			const features_vector& in_v,
+			features_vector& out_v,
+			int out_size,
+			int _count_features,
+			features_vector& g,
+			thrust::device_vector<int>& likes_offsets,
+			thrust::device_vector<int>& likes_sizes);
+
 	void generate_test_set();
+
+	void init_thrust_vectors();
 
 private:
 	///
@@ -124,6 +144,8 @@ private:
 	int _count_items;
 
 	int _count_features;
+	int _count_samples;
+
 
 	///
 	/// Internal data
@@ -134,6 +156,17 @@ private:
 	likes_weights_vector         _user_likes_weights;
 	likes_vector                 _item_likes;
 	likes_weights_vector         _item_likes_weights;
+
+	d_likes_vector                 d_user_likes;
+	d_likes_weights_vector         d_user_likes_weights;
+	d_likes_vector                 d_item_likes;
+	d_likes_weights_vector         d_item_likes_weights;
+
+	thrust::device_vector<int> d_user_offsets;
+	thrust::device_vector<int> d_item_offsets;
+
+	thrust::device_vector<int> d_user_sizes;
+	thrust::device_vector<int> d_item_sizes;
 
 	float _als_alfa;
 	float _als_gamma;

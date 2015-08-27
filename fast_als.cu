@@ -6,6 +6,8 @@
 
 #include "fast_als.cuh"
 
+#define BLOCK_SIZE 32
+
 void checkStatus(culaStatus status)
 {
 	char buf[256];
@@ -34,7 +36,8 @@ fast_als::fast_als(std::istream& tuples_stream,
 		_als_alfa(alfa),
 		_als_gamma(gamma),
 		_count_error_samples_for_users(count_error_samples_for_users),
-		_count_error_samples_for_items(count_error_samples_for_items)
+		_count_error_samples_for_items(count_error_samples_for_items),
+		_count_samples(count_samples)
 {
 	status = culaInitialize();
 	checkStatus(status);
@@ -44,7 +47,7 @@ fast_als::fast_als(std::istream& tuples_stream,
 
 	read_likes(tuples_stream, count_samples, likes_format);
 
-	generate_test_set();
+//	generate_test_set();
 
 	_features_users.assign(_count_users * _count_features, 0 );
 	_features_items.assign(_count_items * _count_features, 0 );
@@ -81,7 +84,7 @@ void fast_als::read_likes(std::istream& tuples_stream, int count_simples, int fo
 
 		if( format == 0 )
 		{
-//			getline(line_stream, value, tab_delim);
+			getline(line_stream, value, tab_delim);
 //			unsigned long gid = atol(value.c_str());
 		}
 
@@ -122,7 +125,7 @@ void fast_als::read_likes(std::istream& tuples_stream, int count_simples, int fo
 		///std::cout << "i:" << item << " -> " << user << std::endl;
 
 		i++;
-		if(count_simples && i > count_simples) break;
+		if(count_simples && i >= count_simples) break;
 	}
 
 	std::cout.flush();
@@ -180,6 +183,7 @@ void fast_als::fill_rnd(features_vector& in_v, int in_size)
 void fast_als::calculate(int count_iterations)
 {
 	fill_rnd(_features_users, _count_users);
+	init_thrust_vectors();
 
 	for(int i = 0; i < count_iterations; i++)
 	{
@@ -187,35 +191,36 @@ void fast_als::calculate(int count_iterations)
 		std::cerr << "ALS Iteration: " << i << std::endl;
 
 		std::cerr << "Items." << std::endl;
-		solve(_item_likes.begin(), _item_likes_weights.begin(), _features_users, _count_users, _features_items, _count_items, _count_features);
+		solve(d_item_likes, d_item_likes_weights, _features_users, _count_users, _features_items, _count_items,
+				_count_features, d_item_offsets, d_item_sizes);
 		std::cerr << "Users." << std::endl;
-		solve(_user_likes.begin(), _user_likes_weights.begin(), _features_items, _count_items, _features_users, _count_users, _count_features);
+		solve(d_user_likes, d_user_likes_weights, _features_items, _count_items, _features_users, _count_users,
+				_count_features, d_user_offsets, d_user_sizes);
 
 		time_t end =  time(0);
-//		std::cout << "==== Iteration time : " << end - start << std::endl;
+		std::cout << "==== Iteration time : " << end - start << std::endl;
 
 		//MSE();
-		hit_rate();
+//		hit_rate();
 
 	}
 }
 
 void fast_als::solve(
-		const likes_vector::const_iterator& likes,
-		const likes_weights_vector::const_iterator& weights,
+		const d_likes_vector& likes,
+		const d_likes_weights_vector& weights,
 		features_vector& in_v,
 		int in_size,
 		features_vector& out_v,
 		int out_size,
-		int _count_features)
+		int _count_features,
+		thrust::device_vector<int>& likes_offsets,
+		thrust::device_vector<int>& likes_sizes)
 {
-
 	fast_als::features_vector g = calc_g(in_v, in_size, _count_features);
+	cudaDeviceSynchronize();
 
-	for (int i = 0; i < out_size; i++)
-	{
-		calc_ridge_regression(*(likes + i), *(weights + i), in_v, (*(likes + i)).size(), out_v, out_size, _count_features, g, i);
-	}
+	calc_ridge_regression_gpu(likes, weights, in_v, out_v, out_size, _count_features, g, likes_offsets, likes_sizes);
 }
 
 fast_als::features_vector fast_als::calc_g(features_vector& in_v, int in_size, int _count_features)
@@ -276,6 +281,111 @@ fast_als::features_vector fast_als::calc_g(features_vector& in_v, int in_size, i
 	return arma::conv_to<fast_als::features_vector>::from(arma::vectorise(G2.t()));
 	*/
 }
+
+__global__ void ridge_regression_kernel(const int* likes, const float* weights, const float* in_v, float* out_v, int out_size,
+		int _count_features, float* g, int* likes_sizes, int* likes_offsets, float _als_alfa, float _als_gamma)
+{
+	int x = blockIdx.x * blockDim.x + threadIdx.x;
+	if (x < out_size)
+	{
+		int id = x;
+		int in_size = likes_sizes[id];
+		int in_offset = likes_offsets[id];
+		int count_samples = in_size + _count_features;
+		float* errors = new float[count_samples];
+
+		for (int i = 0; i < in_size; i++)
+		{
+			int in_id = likes[in_offset + i];
+			float sum = 0;
+			for (int j = 0; j < _count_features; j++)
+			{
+				sum += out_v[id * _count_features + j] * in_v[in_id * _count_features + j];
+			}
+			float c = 1 + _als_alfa * weights[in_offset + i];
+			errors[i] = (c / (c - 1)) - sum;
+		}
+
+		for (int i = 0; i < _count_features; i++)
+		{
+			float sum = 0;
+			for (int j = 0; j < _count_features; j++)
+			{
+				sum += out_v[id * _count_features + j] * g[i * _count_features + j];
+			}
+			errors[in_size + i] = -sum;
+		}
+
+		for (int k = 0; k < _count_features; k++)
+		{
+			for (int i = 0; i < in_size; i++)
+			{
+				errors[i] += out_v[id * _count_features + k] * in_v[likes[in_offset + i] * _count_features + k];
+			}
+			for (int i = 0; i < _count_features; i++)
+			{
+				errors[in_size + i] += out_v[id * _count_features + k] * g[i * _count_features + k];
+			}
+
+			out_v[id * _count_features + k] = 0;
+
+			float a = 0;
+			float d = 0;
+			for (int i = 0; i < in_size; i++)
+			{
+				int in_id = likes[in_offset + i];
+				float c = _als_alfa * weights[in_offset + i];
+				a += c * in_v[in_id * _count_features + k] * in_v[in_id * _count_features + k];
+				d += c * in_v[in_id * _count_features + k] * errors[i];
+			}
+			for (int i = 0; i < _count_features; i++)
+			{
+				a += g[i * _count_features + k] * g[i * _count_features + k];
+				d += g[i * _count_features + k] * errors[in_size + i];
+			}
+
+			out_v[id * _count_features + k] = d / (_als_gamma + a);
+
+			for (int i = 0; i < in_size; i++)
+			{
+				errors[i] -= out_v[id * _count_features + k] * in_v[likes[in_offset + i] * _count_features + k];
+			}
+			for (int i = 0; i < _count_features; i++)
+			{
+				errors[in_size + i] -= out_v[id * _count_features + k] * g[i * _count_features + k];
+			}
+		}
+		delete[] errors;
+	}
+}
+
+void fast_als::calc_ridge_regression_gpu(
+		const d_likes_vector& likes,
+		const d_likes_weights_vector& weights,
+		const features_vector& in_v,
+		features_vector& out_v,
+		int out_size,
+		int _count_features,
+		features_vector& g,
+		thrust::device_vector<int>& likes_offsets,
+		thrust::device_vector<int>& likes_sizes)
+{
+	d_features_vector d_in_v(in_v);
+	d_features_vector d_out_v(out_v);
+	d_features_vector d_g(g);
+
+	dim3 block(BLOCK_SIZE, 1);
+	dim3 grid(1 + out_size / BLOCK_SIZE, 1);
+
+	ridge_regression_kernel<<<grid, block>>>(thrust::raw_pointer_cast(&likes[0]), thrust::raw_pointer_cast(&weights[0]),
+			thrust::raw_pointer_cast(&d_in_v[0]), thrust::raw_pointer_cast(&d_out_v[0]), out_size, _count_features,
+			thrust::raw_pointer_cast(&d_g[0]), thrust::raw_pointer_cast(&likes_sizes[0]), thrust::raw_pointer_cast(&likes_offsets[0]),
+			_als_alfa, _als_gamma);
+	cudaDeviceSynchronize();
+
+	thrust::copy(d_out_v.begin(), d_out_v.end(), out_v.begin());
+}
+
 
 void fast_als::calc_ridge_regression(
 		const likes_vector_item& likes,
@@ -455,4 +565,57 @@ void fast_als::serialize_matrix(std::ostream& out, const float* mat, int crow, i
 		}
 		out << std::endl;
 	}
+}
+
+void fast_als::init_thrust_vectors()
+{
+	std::vector<int> temp_likes(_count_samples);
+	std::vector<float> temp_likes_w(_count_samples);
+	std::vector<int> temp_offsets;
+	std::vector<int> temp_sizes;
+
+	std::copy(_user_likes[0].begin(), _user_likes[0].end(), temp_likes.begin());
+	std::copy(_user_likes_weights[0].begin(), _user_likes_weights[0].end(), temp_likes_w.begin());
+	temp_offsets.push_back(0);
+	temp_sizes.push_back(_user_likes[0].size());
+
+	for (int i = 1; i < _count_users; i++)
+	{
+		int off = temp_offsets.back() + temp_sizes[i - 1];
+		std::copy(_user_likes[i].begin(), _user_likes[i].end(), temp_likes.begin() + off);
+		std::copy(_user_likes_weights[i].begin(), _user_likes_weights[i].end(), temp_likes_w.begin() + off);
+		temp_offsets.push_back(off);
+		temp_sizes.push_back(_user_likes[i].size());
+	}
+
+	d_user_likes = temp_likes;
+	d_user_likes_weights = temp_likes_w;
+	d_user_offsets = temp_offsets;
+	d_user_sizes = temp_sizes;
+
+	cudaDeviceSynchronize();
+
+	temp_offsets.resize(0);
+	temp_sizes.resize(0);
+
+	std::copy(_item_likes[0].begin(), _item_likes[0].end(), temp_likes.begin());
+	std::copy(_item_likes_weights[0].begin(), _item_likes_weights[0].end(), temp_likes_w.begin());
+	temp_offsets.push_back(0);
+	temp_sizes.push_back(_item_likes[0].size());
+
+	for (int i = 1; i < _count_items; i++)
+	{
+		int off = temp_offsets.back() + temp_sizes[i - 1];
+		std::copy(_item_likes[i].begin(), _item_likes[i].end(), temp_likes.begin() + off);
+		std::copy(_item_likes_weights[i].begin(), _item_likes_weights[i].end(), temp_likes_w.begin() + off);
+		temp_offsets.push_back(off);
+		temp_sizes.push_back(_item_likes[i].size());
+	}
+
+	d_item_likes = temp_likes;
+	d_item_likes_weights = temp_likes_w;
+	d_item_offsets = temp_offsets;
+	d_item_sizes = temp_sizes;
+
+	cudaDeviceSynchronize();
 }
