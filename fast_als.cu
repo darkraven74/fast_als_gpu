@@ -6,7 +6,7 @@
 
 #include "fast_als.cuh"
 
-#define BLOCK_SIZE 32
+#define BLOCK_SIZE 64
 
 void checkStatus(culaStatus status)
 {
@@ -160,6 +160,7 @@ void fast_als::generate_test_set()
 			_user_likes[i].erase(_user_likes[i].begin() + id);
 			_user_likes_weights[i].erase(_user_likes_weights[i].begin() + id);
 			_user_likes_weights_temp[i].erase(_user_likes_weights_temp[i].begin() + id);
+			_count_samples--;
 			break;
 		}
 	}
@@ -198,7 +199,7 @@ void fast_als::calculate(int count_iterations)
 				_count_features, d_user_offsets, d_user_sizes);
 
 		time_t end =  time(0);
-		std::cout << "==== Iteration time : " << end - start << std::endl;
+		std::cerr << "==== Iteration time : " << end - start << std::endl;
 
 		//MSE();
 //		hit_rate();
@@ -217,10 +218,17 @@ void fast_als::solve(
 		thrust::device_vector<int>& likes_offsets,
 		thrust::device_vector<int>& likes_sizes)
 {
+	time_t start = time(0);
 	fast_als::features_vector g = calc_g(in_v, in_size, _count_features);
 	cudaDeviceSynchronize();
+	start = time(0) - start;
+	std::cerr << "g calc: " << start << std::endl;
 
+	start = time(0);
 	calc_ridge_regression_gpu(likes, weights, in_v, out_v, out_size, _count_features, g, likes_offsets, likes_sizes);
+	start = time(0) - start;
+	std::cerr << "regression calc: " << start << std::endl;
+
 }
 
 fast_als::features_vector fast_als::calc_g(features_vector& in_v, int in_size, int _count_features)
@@ -291,8 +299,11 @@ __global__ void ridge_regression_kernel(const int* likes, const float* weights, 
 		int id = x;
 		int in_size = likes_sizes[id];
 		int in_offset = likes_offsets[id];
-		int count_samples = in_size + _count_features;
-		float* errors = new float[count_samples];
+//		int count_samples = in_size + _count_features;
+//		float* errors = new float[count_samples];
+		float errors[14000];
+
+
 
 		for (int i = 0; i < in_size; i++)
 		{
@@ -318,16 +329,18 @@ __global__ void ridge_regression_kernel(const int* likes, const float* weights, 
 
 		for (int k = 0; k < _count_features; k++)
 		{
-			for (int i = 0; i < in_size; i++)
+			/*for (int i = 0; i < in_size; i++)
 			{
 				errors[i] += out_v[id * _count_features + k] * in_v[likes[in_offset + i] * _count_features + k];
 			}
 			for (int i = 0; i < _count_features; i++)
 			{
 				errors[in_size + i] += out_v[id * _count_features + k] * g[i * _count_features + k];
-			}
+			}*/
 
-			out_v[id * _count_features + k] = 0;
+//			out_v[id * _count_features + k] = 0;
+
+			float out_v_cur = out_v[id * _count_features + k];
 
 			float a = 0;
 			float d = 0;
@@ -335,27 +348,33 @@ __global__ void ridge_regression_kernel(const int* likes, const float* weights, 
 			{
 				int in_id = likes[in_offset + i];
 				float c = _als_alfa * weights[in_offset + i];
-				a += c * in_v[in_id * _count_features + k] * in_v[in_id * _count_features + k];
-				d += c * in_v[in_id * _count_features + k] * errors[i];
+				float in_v_cur = in_v[in_id * _count_features + k];
+				errors[i] += out_v_cur * in_v_cur;
+				a += c * in_v_cur * in_v_cur;
+				d += c * in_v_cur * errors[i];
 			}
 			for (int i = 0; i < _count_features; i++)
 			{
-				a += g[i * _count_features + k] * g[i * _count_features + k];
-				d += g[i * _count_features + k] * errors[in_size + i];
+				float g_cur = g[i * _count_features + k];
+				errors[in_size + i] += out_v_cur * g_cur;
+				a += g_cur * g_cur;
+				d += g_cur * errors[in_size + i];
 			}
 
 			out_v[id * _count_features + k] = d / (_als_gamma + a);
 
+			out_v_cur = out_v[id * _count_features + k];
+
 			for (int i = 0; i < in_size; i++)
 			{
-				errors[i] -= out_v[id * _count_features + k] * in_v[likes[in_offset + i] * _count_features + k];
+				errors[i] -= out_v_cur * in_v[likes[in_offset + i] * _count_features + k];
 			}
 			for (int i = 0; i < _count_features; i++)
 			{
-				errors[in_size + i] -= out_v[id * _count_features + k] * g[i * _count_features + k];
+				errors[in_size + i] -= out_v_cur * g[i * _count_features + k];
 			}
 		}
-		delete[] errors;
+//		delete[] errors;
 	}
 }
 
@@ -374,14 +393,24 @@ void fast_als::calc_ridge_regression_gpu(
 	d_features_vector d_out_v(out_v);
 	d_features_vector d_g(g);
 
+
 	dim3 block(BLOCK_SIZE, 1);
 	dim3 grid(1 + out_size / BLOCK_SIZE, 1);
 
+	cudaDeviceSynchronize();
+	time_t s = time(0);
 	ridge_regression_kernel<<<grid, block>>>(thrust::raw_pointer_cast(&likes[0]), thrust::raw_pointer_cast(&weights[0]),
 			thrust::raw_pointer_cast(&d_in_v[0]), thrust::raw_pointer_cast(&d_out_v[0]), out_size, _count_features,
 			thrust::raw_pointer_cast(&d_g[0]), thrust::raw_pointer_cast(&likes_sizes[0]), thrust::raw_pointer_cast(&likes_offsets[0]),
 			_als_alfa, _als_gamma);
 	cudaDeviceSynchronize();
+	s = time(0) - s;
+	std::cerr << "ker time: " << s << std::endl;
+	cudaError_t lastErr = cudaGetLastError();
+	if (lastErr != cudaSuccess)
+	{
+		std::cout << "cuda error! " << cudaGetErrorString(lastErr) <<  std::endl;
+	}
 
 	thrust::copy(d_out_v.begin(), d_out_v.end(), out_v.begin());
 }
@@ -569,6 +598,7 @@ void fast_als::serialize_matrix(std::ostream& out, const float* mat, int crow, i
 
 void fast_als::init_thrust_vectors()
 {
+
 	std::vector<int> temp_likes(_count_samples);
 	std::vector<float> temp_likes_w(_count_samples);
 	std::vector<int> temp_offsets;
@@ -592,6 +622,10 @@ void fast_als::init_thrust_vectors()
 	d_user_likes_weights = temp_likes_w;
 	d_user_offsets = temp_offsets;
 	d_user_sizes = temp_sizes;
+
+	std::vector<int>::iterator it = std::max_element(temp_sizes.begin(), temp_sizes.end());
+	std::cout << "max user size: " << *it << std::endl;
+
 
 	cudaDeviceSynchronize();
 
@@ -618,4 +652,10 @@ void fast_als::init_thrust_vectors()
 	d_item_sizes = temp_sizes;
 
 	cudaDeviceSynchronize();
+
+	it = std::max_element(temp_sizes.begin(), temp_sizes.end());
+	std::cout << "max item size: " << *it << std::endl;
+
+
+
 }
