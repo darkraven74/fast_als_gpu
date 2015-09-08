@@ -96,7 +96,7 @@ int main(int argc, char *argv[])
 
 	std::cout << "als calc time: " << t2.tv_sec - t1.tv_sec << std::endl;
 
-	/*std::ofstream fout_users((output_file_name+".ufea").c_str());
+	std::ofstream fout_users((output_file_name+".ufea").c_str());
 	als_alg.serialize_users(fout_users);
 	fout_users.close();
 
@@ -111,7 +111,7 @@ int main(int argc, char *argv[])
 	std::ofstream fout_imap((output_file_name+".imap").c_str());
 	als_alg.serialize_items_map(fout_imap);
 	fout_imap.close();
-	*/
+
 
 	return 0;
 }

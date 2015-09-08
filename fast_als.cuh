@@ -7,7 +7,7 @@
 #include <sstream>
 #include <iostream>
 #include <cstdlib>
-#include <random>
+//#include <random>
 
 #include <cula.h>
 #include <cula_blas.h>
@@ -56,7 +56,7 @@ public:
 	virtual void calculate(int count_iterations);
 
 	virtual void MSE();
-	virtual void hit_rate();
+	virtual float hit_rate();
 
 	///
 	/// Get Items features vector
