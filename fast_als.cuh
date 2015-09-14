@@ -11,6 +11,7 @@
 
 #include <cula.h>
 #include <cula_blas.h>
+#include <cublas_v2.h>
 #include <thrust/device_vector.h>
 
 class fast_als {
@@ -106,6 +107,8 @@ protected:
 			thrust::device_vector<int>& likes_offsets,
 			thrust::device_vector<int>& likes_sizes);
 
+	void mulYxY(features_vector& in_v, int in_size, std::vector<float>& ans);
+
 	fast_als::features_vector calc_g(features_vector& in_v, int in_size, int _count_features);
 
 	void calc_ridge_regression(
@@ -183,6 +186,8 @@ private:
 	likes_weights_vector _user_likes_weights_temp;
 
 	culaStatus status;
+    cublasHandle_t cublas_handle;
+    cublasStatus_t cublas_status;
 };
 
 #endif /* FAST_ALS_CUH_ */

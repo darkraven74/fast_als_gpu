@@ -37,7 +37,8 @@ fast_als::fast_als(std::istream& tuples_stream,
 		_als_gamma(gamma),
 		_count_error_samples_for_users(count_error_samples_for_users),
 		_count_error_samples_for_items(count_error_samples_for_items),
-		_count_samples(count_samples)
+		_count_samples(count_samples),
+		cublas_status(cublasCreate(&cublas_handle))
 {
 	status = culaInitialize();
 	checkStatus(status);
@@ -56,6 +57,7 @@ fast_als::fast_als(std::istream& tuples_stream,
 fast_als::~fast_als()
 {
 	culaShutdown();
+	cublas_status = cublasDestroy(cublas_handle);
 }
 
 void fast_als::read_likes(std::istream& tuples_stream, int count_simples, int format)
@@ -246,6 +248,71 @@ void fast_als::solve(
 
 }
 
+#define RESERVED_MEM 0xA00000
+
+void fast_als::mulYxY(features_vector& in_v, int in_size, std::vector<float>& ans)
+{
+	thrust::device_vector<float> device_YxY(_count_features * _count_features, 0);
+	ans.assign(_count_features * _count_features, 0);
+	float alpha = 1;
+	float beta = 1;
+	///
+	/// Calculate size of block for input matrix
+	/// input matreix is Y matrix
+	///
+	size_t cuda_free_mem = 0;
+	size_t cuda_total_mem = 0;
+
+	cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
+	cuda_free_mem -= RESERVED_MEM;
+	std::cerr << "Cuda memory YxY free: " << cuda_free_mem << std::endl;
+
+
+	///
+	/// detect size of block of Y matrix
+	///
+	int count_rows = cuda_free_mem / (_count_features *sizeof(float));
+
+	count_rows = count_rows >= in_size? in_size:count_rows;
+	int parts_size = in_size / count_rows + ( (in_size  % count_rows != 0)? 1 : 0);
+	thrust::device_vector<float> x_device(count_rows * _count_features, 0);
+
+	for(int part=0; part < parts_size; part++)
+	{
+		int actual_part_size = ( part == parts_size-1 && in_size  % count_rows != 0) ?  in_size  % count_rows : count_rows;
+
+		/// copy to memory
+		/*for(int i=0; i < _count_features; ++i)
+		{
+			size_t offset = i* in_size + part * count_rows;
+			thrust::copy(in_v.begin()+ offset,  in_v.begin()+ offset + actual_part_size, x_device.begin() + i * actual_part_size) ;
+		}*/
+
+		size_t offset = part * _count_features * count_rows;
+		thrust::copy(in_v.begin()+ offset,  in_v.begin()+ offset + actual_part_size * _count_features, x_device.begin());
+
+
+		/*cublas_status = cublasSgemm(cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N, _count_features, _count_features, actual_part_size , &alpha,
+							 thrust::raw_pointer_cast(&x_device[0]), actual_part_size , thrust::raw_pointer_cast(&x_device[0]),
+							 actual_part_size, &beta, thrust::raw_pointer_cast(&device_YxY[0]), _count_features);*/
+
+		cublas_status = cublasSgemm(cublas_handle, CUBLAS_OP_N, CUBLAS_OP_T, _count_features, _count_features, actual_part_size , &alpha,
+									 thrust::raw_pointer_cast(&x_device[0]), _count_features , thrust::raw_pointer_cast(&x_device[0]),
+									 _count_features, &beta, thrust::raw_pointer_cast(&device_YxY[0]), _count_features);
+
+		/*status = culaSgemm('N', 'T', _count_features, _count_features, in_size, 1.0f, &in_v[0], _count_features,
+					&in_v[0], _count_features, 0.0f, &A[0], _count_features);
+		checkStatus(status);*/
+
+
+
+		if ( cudaSuccess != cudaPeekAtLastError() )
+			std::cerr <<  "!WARN - Cuda error (als::mulYxY -> cublasSgemm) : "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
+	}
+
+	thrust::copy(device_YxY.begin(), device_YxY.end(), ans.begin());
+}
+
 fast_als::features_vector fast_als::calc_g(features_vector& in_v, int in_size, int _count_features)
 {
 	std::vector<float> A(_count_features * _count_features);
@@ -253,9 +320,28 @@ fast_als::features_vector fast_als::calc_g(features_vector& in_v, int in_size, i
 	std::vector<float> G(_count_features * _count_features);
 	std::vector<float> S(_count_features);
 
-	status = culaSgemm('N', 'T', _count_features, _count_features, in_size, 1.0f, &in_v[0], _count_features,
+	/*status = culaSgemm('N', 'T', _count_features, _count_features, in_size, 1.0f, &in_v[0], _count_features,
 			&in_v[0], _count_features, 0.0f, &A[0], _count_features);
-	checkStatus(status);
+	checkStatus(status);*/
+
+
+	mulYxY(in_v, in_size, A);
+
+
+	/*std::cout << "====== YxY === " << std::endl;
+	for (int i = 0; i < _count_features; i++)
+	{
+		for (int j = 0; j < _count_features; j++)
+		{
+			std::cout << A[i * _count_features + j] << " ";
+		}
+		std::cout << std::endl;
+	}
+	std::cout << "End of ====== YxY === " << std::endl;
+	*/
+
+
+
 
 	status = culaSgesvd('N', 'S', _count_features, _count_features, &A[0], _count_features, &S[0], NULL,
 			_count_features, &U[0], _count_features);
@@ -281,28 +367,6 @@ fast_als::features_vector fast_als::calc_g(features_vector& in_v, int in_size, i
 	}
 
 	return G;
-
-	/*arma::fmat A(in_v);
-	A.reshape(_count_features, in_size);
-	A = A.t();
-
-	A = A.t() * A;
-
-	std::cout << "\nAt*A matrix: " << std::endl;
-	A.print();
-
-	arma::fmat U;
-	arma::fvec s;
-	arma::fmat V;
-
-	arma::svd(U,s,V,A);
-
-	arma::fmat lam_sqrt2(arma::diagmat(arma::sqrt(s)));
-
-	arma::fmat G2 = lam_sqrt2 * U.t();
-
-	return arma::conv_to<fast_als::features_vector>::from(arma::vectorise(G2.t()));
-	*/
 }
 
 __global__ void ridge_regression_kernel(const int* likes, const float* weights, const float* in_v, float* out_v, int out_size,
