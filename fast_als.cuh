@@ -97,45 +97,34 @@ protected:
 	/// solve one iteration of als
 	///
 	void solve(
-			const d_likes_vector& likes,
-			const d_likes_weights_vector& weights,
+			const likes_vector& likes,
+			const likes_weights_vector& weights,
 			features_vector& in_v,
 			int in_size,
 			features_vector& out_v,
 			int out_size,
 			int _count_features,
-			thrust::device_vector<int>& likes_offsets,
-			thrust::device_vector<int>& likes_sizes);
+			std::vector<int>& likes_offsets,
+			std::vector<int>& likes_sizes);
 
 	void mulYxY(features_vector& in_v, int in_size, std::vector<float>& ans);
 
 	fast_als::features_vector calc_g(features_vector& in_v, int in_size, int _count_features);
 
-	void calc_ridge_regression(
-			const likes_vector_item& likes,
-			const likes_weights_vector_item& weights,
-			const features_vector& in_v,
-			int in_size,
-			features_vector& out_v,
-			int out_size,
-			int _count_features,
-			features_vector& g,
-			int id);
-
 	void calc_ridge_regression_gpu(
-			const d_likes_vector& likes,
-			const d_likes_weights_vector& weights,
-			const features_vector& in_v,
-			features_vector& out_v,
-			int out_size,
-			int _count_features,
-			features_vector& g,
-			thrust::device_vector<int>& likes_offsets,
-			thrust::device_vector<int>& likes_sizes);
+				const likes_vector& likes,
+				const likes_weights_vector& weights,
+				const features_vector& in_v,
+				features_vector& out_v,
+				int out_size,
+				int _count_features,
+				features_vector& g,
+				std::vector<int>& likes_offsets,
+				std::vector<int>& likes_sizes);
 
 	void generate_test_set();
 
-	void init_thrust_vectors();
+	void init_helper_vectors();
 
 private:
 	///
@@ -160,16 +149,11 @@ private:
 	likes_vector                 _item_likes;
 	likes_weights_vector         _item_likes_weights;
 
-	d_likes_vector                 d_user_likes;
-	d_likes_weights_vector         d_user_likes_weights;
-	d_likes_vector                 d_item_likes;
-	d_likes_weights_vector         d_item_likes_weights;
+	std::vector<int> d_user_offsets;
+	std::vector<int> d_item_offsets;
 
-	thrust::device_vector<int> d_user_offsets;
-	thrust::device_vector<int> d_item_offsets;
-
-	thrust::device_vector<int> d_user_sizes;
-	thrust::device_vector<int> d_item_sizes;
+	std::vector<int> d_user_sizes;
+	std::vector<int> d_item_sizes;
 
 	float _als_alfa;
 	float _als_gamma;
