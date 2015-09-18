@@ -104,8 +104,7 @@ protected:
 			features_vector& out_v,
 			int out_size,
 			int _count_features,
-			std::vector<int>& likes_offsets,
-			std::vector<int>& likes_sizes);
+			std::vector<int>& likes_offsets);
 
 	void mulYxY(features_vector& in_v, int in_size, std::vector<float>& ans);
 
@@ -119,8 +118,7 @@ protected:
 				int out_size,
 				int _count_features,
 				features_vector& g,
-				std::vector<int>& likes_offsets,
-				std::vector<int>& likes_sizes);
+				std::vector<int>& likes_offsets);
 
 	void generate_test_set();
 
@@ -151,9 +149,6 @@ private:
 
 	std::vector<int> d_user_offsets;
 	std::vector<int> d_item_offsets;
-
-	std::vector<int> d_user_sizes;
-	std::vector<int> d_item_sizes;
 
 	float _als_alfa;
 	float _als_gamma;
