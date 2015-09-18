@@ -470,12 +470,19 @@ void fast_als::calc_ridge_regression_gpu(
 {
 	d_features_vector d_g(g);
 
-	int count_rows = 500000; //TODO: fix count_rows
+	int count_rows = 300000; //TODO: fix count_rows
 	count_rows = count_rows >= out_size ? out_size : count_rows;
 	int parts_size = out_size / count_rows + ((out_size % count_rows != 0) ? 1 : 0);
 
+	time_t prepare = 0;
+	time_t kernel = 0;
+
+
 	for(int part = 0; part < parts_size; part++)
 	{
+		cudaDeviceSynchronize();
+		time_t start = time(0);
+
 		int actual_part_size = (part == parts_size - 1 && out_size % count_rows != 0) ? out_size % count_rows : count_rows;
 		thrust::device_vector<float> d_weights;
 		thrust::device_vector<int> d_likes_offsets(likes_offsets.begin() + part * count_rows, likes_offsets.begin() + part * count_rows + actual_part_size);
@@ -491,6 +498,8 @@ void fast_als::calc_ridge_regression_gpu(
 
 		size_t offset = part * _count_features * count_rows;
 		d_features_vector d_out_v(out_v.begin() + offset, out_v.begin() + offset + actual_part_size * _count_features);
+
+
 		for (int i = 0; i < actual_part_size; i++)
 		{
 			h_weights.insert(h_weights.end(), (weights.begin() + part * count_rows + i)->begin(), (weights.begin() + part * count_rows + i)->end());
@@ -504,11 +513,22 @@ void fast_als::calc_ridge_regression_gpu(
 			}
 		}
 
+		d_weights = h_weights;
+		d_in_v = h_in_v;
+
+		cudaDeviceSynchronize();
+		start = time(0) - start;
+		prepare += start;
+		start = time(0);
 		if ( cudaSuccess != cudaPeekAtLastError() )
 					std::cerr <<  "!WARN - Cuda error (thrust in regression) : "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
 
-		d_weights = h_weights;
-		d_in_v = h_in_v;
+		//size_t cuda_free_mem = 0;
+		//size_t cuda_total_mem = 0;
+		//cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
+		//std::cerr << "Cuda memory regress free: " << cuda_free_mem << std::endl;
+
+
 
 		dim3 block(BLOCK_SIZE, 1);
 		dim3 grid(1 + actual_part_size / BLOCK_SIZE, 1);
@@ -519,6 +539,9 @@ void fast_als::calc_ridge_regression_gpu(
 				_als_alfa, _als_gamma);
 
 		cudaDeviceSynchronize();
+		start = time(0) - start;
+		kernel += start;
+		start = time(0);
 		cudaError_t lastErr = cudaGetLastError();
 		if (lastErr != cudaSuccess)
 		{
@@ -526,9 +549,14 @@ void fast_als::calc_ridge_regression_gpu(
 		}
 
 		thrust::copy(d_out_v.begin(), d_out_v.end(), out_v.begin() + offset);
+		cudaDeviceSynchronize();
+		start = time(0) - start;
+		prepare += start;
 		if ( cudaSuccess != cudaPeekAtLastError() )
 							std::cerr <<  "!WARN - Cuda error (thrust in regression 2) : "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
 	}
+	std::cout << "prepare time, s: " << prepare << std::endl;
+	std::cout << "kernel time, s: " << kernel << std::endl;
 }
 
 void fast_als::MSE()
@@ -650,6 +678,8 @@ void fast_als::init_helper_vectors()
 		d_user_sizes.push_back(_user_likes[i].size());
 	}
 
+	std::cout << "max user: " << *(std::max_element(d_user_sizes.begin(), d_user_sizes.end())) << std::endl;
+
 	d_item_offsets.push_back(0);
 	d_item_sizes.push_back(_item_likes[0].size());
 
@@ -658,4 +688,7 @@ void fast_als::init_helper_vectors()
 		d_item_offsets.push_back(d_item_offsets.back() + d_item_sizes[i - 1]);
 		d_item_sizes.push_back(_item_likes[i].size());
 	}
+
+	std::cout << "max item: " << *(std::max_element(d_item_sizes.begin(), d_item_sizes.end())) << std::endl;
+
 }
