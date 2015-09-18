@@ -17,7 +17,7 @@ void checkStatus(culaStatus status)
 		return;
 
 	culaGetErrorInfoString(status, culaGetErrorInfo(), buf, sizeof(buf));
-	printf("%s\n", buf);
+	printf("cula error! %s\n", buf);
 
 	culaShutdown();
 	exit(EXIT_FAILURE);
@@ -242,6 +242,9 @@ void fast_als::solve(
 	start = time(0) - start;
 	std::cerr << "g calc: " << start << std::endl;
 
+	if ( cudaSuccess != cudaPeekAtLastError() )
+				std::cerr <<  "!WARN - Cuda error (g calc) : "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
+
 	start = time(0);
 	calc_ridge_regression_gpu(likes, weights, in_v, out_v, out_size, _count_features, g, likes_offsets, likes_sizes);
 	start = time(0) - start;
@@ -307,8 +310,8 @@ void fast_als::mulYxY(features_vector& in_v, int in_size, std::vector<float>& an
 
 
 
-		if ( cudaSuccess != cudaPeekAtLastError() )
-			std::cerr <<  "!WARN - Cuda error (als::mulYxY -> cublasSgemm) : "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
+		if ( cublas_status != 0 )
+			std::cerr <<  "!WARN - Cuda error (als::mulYxY -> cublasSgemm) : "  << cublas_status << std::endl;
 	}
 
 	thrust::copy(device_YxY.begin(), device_YxY.end(), ans.begin());
@@ -467,7 +470,7 @@ void fast_als::calc_ridge_regression_gpu(
 {
 	d_features_vector d_g(g);
 
-	int count_rows = 100000; //TODO: fix count_rows
+	int count_rows = 500000; //TODO: fix count_rows
 	count_rows = count_rows >= out_size ? out_size : count_rows;
 	int parts_size = out_size / count_rows + ((out_size % count_rows != 0) ? 1 : 0);
 
@@ -501,6 +504,9 @@ void fast_als::calc_ridge_regression_gpu(
 			}
 		}
 
+		if ( cudaSuccess != cudaPeekAtLastError() )
+					std::cerr <<  "!WARN - Cuda error (thrust in regression) : "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
+
 		d_weights = h_weights;
 		d_in_v = h_in_v;
 
@@ -516,10 +522,12 @@ void fast_als::calc_ridge_regression_gpu(
 		cudaError_t lastErr = cudaGetLastError();
 		if (lastErr != cudaSuccess)
 		{
-			std::cout << "cuda error! " << cudaGetErrorString(lastErr) <<  std::endl;
+			std::cout << "cuda error in kernel! " << cudaGetErrorString(lastErr) <<  std::endl;
 		}
 
 		thrust::copy(d_out_v.begin(), d_out_v.end(), out_v.begin() + offset);
+		if ( cudaSuccess != cudaPeekAtLastError() )
+							std::cerr <<  "!WARN - Cuda error (thrust in regression 2) : "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
 	}
 }
 
