@@ -469,7 +469,7 @@ void fast_als::calc_ridge_regression_gpu(
 {
 	d_features_vector d_g(g);
 
-	int count_rows = 100000; //TODO: fix count_rows
+	int count_rows = 1000000; //TODO: fix count_rows
 	count_rows = count_rows >= out_size ? out_size : count_rows;
 	int parts_size = out_size / count_rows + ((out_size % count_rows != 0) ? 1 : 0);
 
