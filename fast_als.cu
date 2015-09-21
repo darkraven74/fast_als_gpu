@@ -4,6 +4,7 @@
 #include <map>
 #include <ctime>
 #include <thrust/functional.h>
+#include <omp.h>
 
 #include "fast_als.cuh"
 
@@ -30,7 +31,8 @@ fast_als::fast_als(std::istream& tuples_stream,
 		int count_samples,
 		int likes_format,
 		int count_error_samples_for_users,
-		int count_error_samples_for_items) :
+		int count_error_samples_for_items,
+		int count_gpus) :
 		_count_users(0),
 		_count_items(0),
 		_count_features(count_features),
@@ -39,10 +41,27 @@ fast_als::fast_als(std::istream& tuples_stream,
 		_count_error_samples_for_users(count_error_samples_for_users),
 		_count_error_samples_for_items(count_error_samples_for_items),
 		_count_samples(count_samples),
-		cublas_status(cublasCreate(&cublas_handle))
+		_count_gpus(count_gpus)
 {
-	status = culaInitialize();
-	checkStatus(status);
+	int cout_dev=0;
+	cudaGetDeviceCount(&cout_dev);
+	for (int i = 0; i < cout_dev; i++)
+	{
+		std::cerr << "=== CUDA Device: " <<  i << std::endl;
+		cudaGetDeviceProperties(&prop, i);
+		std::cerr << "Cuda Device: " << prop.name << std::endl;
+		std::cerr << "Total gloabl mem: " << prop.totalGlobalMem << std::endl;
+		std::cerr << "Total shared mem per block: " << prop.sharedMemPerBlock << std::endl;
+		std::cerr << "Multi processors: " << prop.multiProcessorCount << std::endl;
+		std::cerr << "Warp size: " <<  prop.warpSize << std::endl;
+		std::cerr << "maxThreadsPerBlock: " << prop.maxThreadsPerBlock << std::endl;
+		std::cerr << "maxThreadsPerMultiProcessor: " << prop.maxThreadsPerMultiProcessor << std::endl;
+	}
+
+	if (_count_gpus == 0 || _count_gpus > cout_dev)
+	{
+		_count_gpus = cout_dev;
+	}
 
 //	srand(time(NULL));
 	srand(34);
@@ -53,12 +72,12 @@ fast_als::fast_als(std::istream& tuples_stream,
 
 	_features_users.assign(_count_users * _count_features, 0 );
 	_features_items.assign(_count_items * _count_features, 0 );
+	YxY.assign(_count_features * _count_features, 0);
 }
 
 fast_als::~fast_als()
 {
-	culaShutdown();
-	cublas_status = cublasDestroy(cublas_handle);
+
 }
 
 void fast_als::read_likes(std::istream& tuples_stream, int count_simples, int format)
@@ -198,43 +217,147 @@ void fast_als::calculate(int count_iterations)
 	fill_rnd(_features_users, _count_users);
 	init_helper_vectors();
 
+	if (_count_gpus > 1)
+	{
+		calculate_multiple_gpus(count_iterations);
+	}
+	else
+	{
+		calculate_one_gpu(count_iterations);
+	}
+}
+
+void fast_als::calculate_one_gpu(int count_iterations)
+{
 	std::ofstream hr10("hr10.txt");
 
-	for(int i = 0; i < count_iterations; i++)
+	for (int i = 0; i < count_iterations; i++)
 	{
 		time_t start =  time(0);
 		std::cerr << "ALS Iteration: " << i << std::endl;
 
 		std::cerr << "Items." << std::endl;
-		solve(_item_likes, _item_likes_weights, _features_users, _count_users, _features_items, _count_items,
-				_count_features, d_item_offsets);
+		solve(_item_likes.begin(), _item_likes_weights.begin(), _features_users, _count_users, _features_items, _count_items,
+						_count_items, _count_features, d_item_offsets);
+
 		std::cerr << "Users." << std::endl;
-		solve(_user_likes, _user_likes_weights, _features_items, _count_items, _features_users, _count_users,
-				_count_features, d_user_offsets);
+		solve(_user_likes.begin(), _user_likes_weights.begin(), _features_items, _count_items, _features_users, _count_users,
+						_count_users, _count_features, d_user_offsets);
 
 		time_t end =  time(0);
 		std::cerr << "==== Iteration time : " << end - start << std::endl;
 
 		//MSE();
 		//hr10 << hit_rate() << std::endl;
-
 	}
 
 	hr10.close();
 }
 
+void fast_als::calculate_multiple_gpus(int count_iterations)
+{
+	int _count_features_first_part = _count_features / _count_gpus;
+	int _count_features_last_part = _count_features - _count_features_first_part * (_count_gpus - 1);
+
+	int _count_items_first_part = _count_items / _count_gpus;
+	int _count_items_last_part = _count_items - _count_items_first_part * (_count_gpus - 1);
+
+	int _count_users_first_part = _count_users / _count_gpus;
+	int _count_users_last_part = _count_users - _count_users_first_part * (_count_gpus - 1);
+
+	std::vector<int> _count_features_parts(_count_gpus, _count_features_first_part);
+	_count_features_parts.back() = _count_features_last_part;
+
+	std::vector<int> _count_items_parts(_count_gpus, _count_items_first_part);
+	_count_items_parts.back() = _count_items_last_part;
+
+	std::vector<int> _count_users_parts(_count_gpus, _count_users_first_part);
+	_count_users_parts.back() = _count_users_last_part;
+
+	std::vector<int> features_offsets(_count_gpus, 0);
+	std::vector<int> items_offsets(_count_gpus, 0);
+	std::vector<int> users_offsets(_count_gpus, 0);
+
+	for (int i = 1; i < _count_gpus; i++)
+	{
+		features_offsets[i] = features_offsets[i - 1] + _count_features_parts[i - 1];
+		items_offsets[i] = items_offsets[i - 1] + _count_items_parts[i - 1];
+		users_offsets[i] = users_offsets[i - 1] + _count_users_parts[i - 1];
+	}
+
+	omp_set_dynamic(0);
+	omp_set_num_threads(_count_gpus);
+
+	std::ofstream hr10("hr10.txt");
+
+	for (int i = 0; i < count_iterations; i++)
+	{
+		time_t start =  time(0);
+		std::cerr << "ALS Iteration: " << i << std::endl;
+
+		//Items
+		#pragma omp parallel num_threads(_count_gpus)
+		{
+			int thread_id = omp_get_thread_num();
+			int gpu_id;
+			cudaSetDevice(thread_id);
+			cudaGetDevice(&gpu_id);
+			std::cerr << "Items. Thread: " << thread_id << " GPU: " << gpu_id << std::endl;
+
+			solve(_item_likes.begin() + items_offsets[thread_id], _item_likes_weights.begin() + items_offsets[thread_id], _features_users, _count_users,
+					_features_items, _count_items_parts[thread_id], _count_items, _count_features_parts[thread_id], d_item_offsets,
+					features_offsets[thread_id], items_offsets[thread_id]);
+		}
+
+
+		cudaDeviceSynchronize();
+		// Users
+		#pragma omp parallel num_threads(_count_gpus)
+		{
+			int thread_id = omp_get_thread_num();
+			int gpu_id;
+			cudaSetDevice(thread_id);
+			cudaGetDevice(&gpu_id);
+			std::cerr << "Users. Thread: " << thread_id << " GPU: " << gpu_id << std::endl;
+
+			solve(_user_likes.begin() + users_offsets[thread_id], _user_likes_weights.begin() + users_offsets[thread_id], _features_items, _count_items,
+					_features_users, _count_users_parts[thread_id], _count_users, _count_features_parts[thread_id], d_user_offsets,
+					features_offsets[thread_id], users_offsets[thread_id]);
+		}
+
+		cudaDeviceSynchronize();
+
+		time_t end =  time(0);
+		std::cerr << "==== Iteration time : " << end - start << std::endl;
+
+		//MSE();
+		//hr10 << hit_rate() << std::endl;
+	}
+	hr10.close();
+}
+
+
 void fast_als::solve(
-		const likes_vector& likes,
-		const likes_weights_vector& weights,
-		features_vector& in_v,
+		const likes_vector::const_iterator& likes,
+		const likes_weights_vector::const_iterator& weights,
+		const features_vector& in_v,
 		int in_size,
 		features_vector& out_v,
 		int out_size,
-		int _count_features,
-		std::vector<int>& likes_offsets)
+		int out_full_size,
+		int _count_features_local,
+		std::vector<int>& likes_offsets,
+		int features_local_offset,
+		int out_offset)
 {
+	culaStatus cula_status = culaInitialize();
+	checkStatus(cula_status);
+	cublasHandle_t cublas_handle;
+	cublasStatus_t cublas_status(cublasCreate(&cublas_handle));
+
 	time_t start = time(0);
-	fast_als::features_vector g = calc_g(in_v, in_size, _count_features);
+	fast_als::features_vector g = calc_g(in_v, in_size, _count_features, cublas_handle, cublas_status, cula_status,
+			_count_features_local, features_local_offset);
 //	fast_als::features_vector g(_count_features * _count_features);
 //	fill_rnd(g, _count_features);
 	cudaDeviceSynchronize();
@@ -245,23 +368,26 @@ void fast_als::solve(
 				std::cerr <<  "!WARN - Cuda error (g calc) : "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
 
 	start = time(0);
-	calc_ridge_regression_gpu(likes, weights, in_v, out_v, out_size, _count_features, g, likes_offsets);
+	calc_ridge_regression_gpu(likes, weights, in_v, out_v, out_size, g, likes_offsets, out_offset);
 	start = time(0) - start;
 	std::cerr << "regression calc: " << start << std::endl;
+
+	culaShutdown();
+	cublas_status = cublasDestroy(cublas_handle);
 
 }
 
 #define RESERVED_MEM 0xA00000
 
-void fast_als::mulYxY(features_vector& in_v, int in_size, std::vector<float>& ans)
+void fast_als::mulYxY(const features_vector& in_v, int in_size, std::vector<float>& ans,
+		cublasHandle_t& cublas_handle, cublasStatus_t& cublas_status, int _count_features_local, int features_local_offset)
 {
-	thrust::device_vector<float> device_YxY(_count_features * _count_features, 0);
-	ans.assign(_count_features * _count_features, 0);
+	thrust::device_vector<float> device_YxY(_count_features * _count_features_local, 0);
 	float alpha = 1;
 	float beta = 1;
 	///
 	/// Calculate size of block for input matrix
-	/// input matreix is Y matrix
+	/// input matrix is Y matrix
 	///
 	size_t cuda_free_mem = 0;
 	size_t cuda_total_mem = 0;
@@ -284,71 +410,42 @@ void fast_als::mulYxY(features_vector& in_v, int in_size, std::vector<float>& an
 	{
 		int actual_part_size = ( part == parts_size-1 && in_size  % count_rows != 0) ?  in_size  % count_rows : count_rows;
 
-		/// copy to memory
-		/*for(int i=0; i < _count_features; ++i)
-		{
-			size_t offset = i* in_size + part * count_rows;
-			thrust::copy(in_v.begin()+ offset,  in_v.begin()+ offset + actual_part_size, x_device.begin() + i * actual_part_size) ;
-		}*/
-
 		size_t offset = part * _count_features * count_rows;
 		thrust::copy(in_v.begin()+ offset,  in_v.begin()+ offset + actual_part_size * _count_features, x_device.begin());
 
 
-		/*cublas_status = cublasSgemm(cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N, _count_features, _count_features, actual_part_size , &alpha,
-							 thrust::raw_pointer_cast(&x_device[0]), actual_part_size , thrust::raw_pointer_cast(&x_device[0]),
-							 actual_part_size, &beta, thrust::raw_pointer_cast(&device_YxY[0]), _count_features);*/
-
-		cublas_status = cublasSgemm(cublas_handle, CUBLAS_OP_N, CUBLAS_OP_T, _count_features, _count_features, actual_part_size , &alpha,
-									 thrust::raw_pointer_cast(&x_device[0]), _count_features , thrust::raw_pointer_cast(&x_device[0]),
-									 _count_features, &beta, thrust::raw_pointer_cast(&device_YxY[0]), _count_features);
-
-		/*status = culaSgemm('N', 'T', _count_features, _count_features, in_size, 1.0f, &in_v[0], _count_features,
-					&in_v[0], _count_features, 0.0f, &A[0], _count_features);
-		checkStatus(status);*/
-
-
+		cublas_status = cublasSgemm(cublas_handle, CUBLAS_OP_N, CUBLAS_OP_T, _count_features, _count_features_local, actual_part_size , &alpha,
+											 thrust::raw_pointer_cast(&x_device[0]), _count_features,
+											 thrust::raw_pointer_cast(&x_device[0])+ features_local_offset,
+											 _count_features, &beta, thrust::raw_pointer_cast(&device_YxY[0]),
+											 _count_features);
 
 		if ( cublas_status != 0 )
 			std::cerr <<  "!WARN - Cuda error (als::mulYxY -> cublasSgemm) : "  << cublas_status << std::endl;
 	}
 
-	thrust::copy(device_YxY.begin(), device_YxY.end(), ans.begin());
+	thrust::copy(device_YxY.begin(), device_YxY.end(), ans.begin() + _count_features * features_local_offset);
+
 }
 
-fast_als::features_vector fast_als::calc_g(features_vector& in_v, int in_size, int _count_features)
+fast_als::features_vector fast_als::calc_g(const features_vector& in_v, int in_size, int _count_features,
+		cublasHandle_t& cublas_handle, cublasStatus_t& cublas_status, culaStatus& cula_status,
+		int _count_features_local, int features_local_offset)
 {
-	std::vector<float> A(_count_features * _count_features);
 	std::vector<float> U(_count_features * _count_features);
 	std::vector<float> G(_count_features * _count_features);
 	std::vector<float> S(_count_features);
 
-	/*status = culaSgemm('N', 'T', _count_features, _count_features, in_size, 1.0f, &in_v[0], _count_features,
-			&in_v[0], _count_features, 0.0f, &A[0], _count_features);
-	checkStatus(status);*/
 
 
-	mulYxY(in_v, in_size, A);
+	mulYxY(in_v, in_size, YxY, cublas_handle, cublas_status, _count_features_local, features_local_offset);
 
+	cudaDeviceSynchronize();
+	#pragma omp barrier
 
-	/*std::cout << "====== YxY === " << std::endl;
-	for (int i = 0; i < _count_features; i++)
-	{
-		for (int j = 0; j < _count_features; j++)
-		{
-			std::cout << A[i * _count_features + j] << " ";
-		}
-		std::cout << std::endl;
-	}
-	std::cout << "End of ====== YxY === " << std::endl;
-	*/
-
-
-
-
-	status = culaSgesvd('N', 'S', _count_features, _count_features, &A[0], _count_features, &S[0], NULL,
+	cula_status = culaSgesvd('N', 'S', _count_features, _count_features, &YxY[0], _count_features, &S[0], NULL,
 			_count_features, &U[0], _count_features);
-	checkStatus(status);
+	checkStatus(cula_status);
 
 	std::vector<float> lam_sqrt(_count_features * _count_features, 0.0);
 
@@ -357,27 +454,9 @@ fast_als::features_vector fast_als::calc_g(features_vector& in_v, int in_size, i
 		lam_sqrt[i * _count_features + i] = sqrt(S[i]);
 	}
 
-	status = culaSgemm('N', 'N', _count_features, _count_features, _count_features, 1.0f, &lam_sqrt[0], _count_features,
+	cula_status = culaSgemm('N', 'N', _count_features, _count_features, _count_features, 1.0f, &lam_sqrt[0], _count_features,
 			&U[0], _count_features, 0.0f, &G[0], _count_features);
-	checkStatus(status);
-
-	//G transpose
-	/*for (int i = 0; i < _count_features; i++)
-	{
-		for (int j = 0; j < i; j++)
-		{
-			std::iter_swap(G.begin() + i * _count_features + j, G.begin() + j * _count_features + i);
-		}
-	}*/
-
-	/*for (int i = 0; i < _count_features; i++)
-	{
-		for (int j = 0; j < _count_features; j++)
-		{
-			std::cout << G[i * _count_features + j] << "\t";
-		}
-		std::cout << std::endl;
-	}*/
+	checkStatus(cula_status);
 
 	return G;
 }
@@ -458,18 +537,18 @@ __global__ void ridge_regression_kernel(const float* weights, const float* in_v,
 }
 
 void fast_als::calc_ridge_regression_gpu(
-		const likes_vector& likes,
-		const likes_weights_vector& weights,
+		const likes_vector::const_iterator& likes,
+		const likes_weights_vector::const_iterator& weights,
 		const features_vector& in_v,
 		features_vector& out_v,
 		int out_size,
-		int _count_features,
 		features_vector& g,
-		std::vector<int>& likes_offsets)
+		std::vector<int>& likes_offsets,
+		int out_offset)
 {
 	d_features_vector d_g(g);
 
-	int count_rows = 1000000; //TODO: fix count_rows
+	int count_rows = 300000; //TODO: fix count_rows
 	count_rows = count_rows >= out_size ? out_size : count_rows;
 	int parts_size = out_size / count_rows + ((out_size % count_rows != 0) ? 1 : 0);
 
@@ -483,15 +562,15 @@ void fast_als::calc_ridge_regression_gpu(
 
 		int actual_part_size = (part == parts_size - 1 && out_size % count_rows != 0) ? out_size % count_rows : count_rows;
 		thrust::device_vector<float> d_weights;
-		thrust::device_vector<int> d_likes_offsets(likes_offsets.begin() + part * count_rows,
-				likes_offsets.begin() + part * count_rows + actual_part_size + 1);
-		int sub = *(likes_offsets.begin() + part * count_rows);
+		thrust::device_vector<int> d_likes_offsets(likes_offsets.begin() + out_offset + part * count_rows,
+				likes_offsets.begin() + out_offset + part * count_rows + actual_part_size + 1);
+		int sub = *(likes_offsets.begin() + out_offset + part * count_rows);
 		thrust::for_each(d_likes_offsets.begin(), d_likes_offsets.end(), thrust::placeholders::_1 -= sub);
 
 		std::vector<float> h_weights;
 		features_vector h_in_v;
 
-		size_t offset = part * _count_features * count_rows;
+		size_t offset = out_offset * _count_features + part * _count_features * count_rows;
 		d_features_vector d_in_v;
 		d_features_vector d_out_v(out_v.begin() + offset, out_v.begin() + offset + actual_part_size * _count_features);
 
@@ -499,11 +578,11 @@ void fast_als::calc_ridge_regression_gpu(
 		int err_size = 0;
 		for (int i = 0; i < actual_part_size; i++)
 		{
-			h_weights.insert(h_weights.end(), (weights.begin() + part * count_rows + i)->begin(), (weights.begin() + part * count_rows + i)->end());
-			err_size += likes[part * count_rows + i].size();
-			for (int j = 0; j < likes[part * count_rows + i].size(); j++)
+			h_weights.insert(h_weights.end(), (weights + part * count_rows + i)->begin(), (weights + part * count_rows + i)->end());
+			err_size += (*(likes + part * count_rows + i)).size();
+			for (int j = 0; j < (*(likes + part * count_rows + i)).size(); j++)
 			{
-				int id = likes[part * count_rows + i][j];
+				int id = (*(likes + part * count_rows + i))[j];
 				h_in_v.insert(h_in_v.end(), in_v.begin() + id * _count_features, in_v.begin() + (id + 1) * _count_features);
 			}
 		}
@@ -560,9 +639,12 @@ float fast_als::hit_rate()
 
 	//predict = P * Q^t
 	//predict = P^t * Q
-	status = culaSgemm('T', 'N', _count_users, _count_items, _count_features, 1.0f, &_features_users[0], _count_features,
+	culaStatus cula_status = culaInitialize();
+	checkStatus(cula_status);
+	cula_status = culaSgemm('T', 'N', _count_users, _count_items, _count_features, 1.0f, &_features_users[0], _count_features,
 			&_features_items[0], _count_features, 0.0f, &predict[0], _count_users);
-	checkStatus(status);
+	checkStatus(cula_status);
+	culaShutdown();
 
 	for (int i = 0; i < _count_users; i++)
 	{

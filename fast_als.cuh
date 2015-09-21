@@ -45,7 +45,8 @@ public:
 			int count_samples,
 			int likes_format,
 			int count_error_samples_for_users,
-			int count_error_samples_for_items);
+			int count_error_samples_for_items,
+			int count_gpus);
 
 	virtual ~fast_als();
 
@@ -93,32 +94,42 @@ protected:
 	///
 	void fill_rnd(features_vector& in_v, int in_size);
 
+	void calculate_one_gpu(int count_iterations);
+	void calculate_multiple_gpus(int count_iterations);
+
 	///
 	/// solve one iteration of als
 	///
 	void solve(
-			const likes_vector& likes,
-			const likes_weights_vector& weights,
-			features_vector& in_v,
+			const likes_vector::const_iterator& likes,
+			const likes_weights_vector::const_iterator& weights,
+			const features_vector& in_v,
 			int in_size,
 			features_vector& out_v,
 			int out_size,
-			int _count_features,
-			std::vector<int>& likes_offsets);
+			int out_full_size,
+			int _count_features_local,
+			std::vector<int>& likes_offsets,
+			int features_local_offset = 0,
+			int out_offset = 0);
 
-	void mulYxY(features_vector& in_v, int in_size, std::vector<float>& ans);
 
-	fast_als::features_vector calc_g(features_vector& in_v, int in_size, int _count_features);
+	void mulYxY(const features_vector& in_v, int in_size, std::vector<float>& ans, cublasHandle_t& cublas_handle,
+			cublasStatus_t& cublas_status, int _count_features_local, int features_local_offset);
+
+	fast_als::features_vector calc_g(const features_vector& in_v, int in_size, int _count_features,
+			cublasHandle_t& cublas_handle, cublasStatus_t& cublas_status, culaStatus& cula_status,
+			int _count_features_local, int features_local_offset);
 
 	void calc_ridge_regression_gpu(
-				const likes_vector& likes,
-				const likes_weights_vector& weights,
+				const likes_vector::const_iterator& likes,
+				const likes_weights_vector::const_iterator& weights,
 				const features_vector& in_v,
 				features_vector& out_v,
 				int out_size,
-				int _count_features,
 				features_vector& g,
-				std::vector<int>& likes_offsets);
+				std::vector<int>& likes_offsets,
+				int out_offset);
 
 	void generate_test_set();
 
@@ -136,6 +147,8 @@ private:
 	int _count_features;
 	int _count_samples;
 
+	int _count_gpus;
+
 
 	///
 	/// Internal data
@@ -149,6 +162,8 @@ private:
 
 	std::vector<int> d_user_offsets;
 	std::vector<int> d_item_offsets;
+
+	std::vector<float> YxY;
 
 	float _als_alfa;
 	float _als_gamma;
@@ -164,9 +179,7 @@ private:
 	std::vector<std::pair<int, int> > test_set;
 	likes_weights_vector _user_likes_weights_temp;
 
-	culaStatus status;
-    cublasHandle_t cublas_handle;
-    cublasStatus_t cublas_status;
+    cudaDeviceProp prop;
 };
 
 #endif /* FAST_ALS_CUH_ */

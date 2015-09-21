@@ -18,6 +18,7 @@ int main(int argc, char *argv[])
 	float als_alfa = 5;
 	int samples_for_calc_error_users = 0;
 	int samples_for_calc_error_items = 0;
+	int count_gpu = 0;
 
 	for(int i = 1; i <  argc; i++)
 	{
@@ -60,8 +61,7 @@ int main(int argc, char *argv[])
 		{
 			i++;
 			als_alfa = atof(argv[i]);
-		}
-		else
+		}else
 		if( sarg == "--als-error")
 		{
 			i++;
@@ -74,6 +74,12 @@ int main(int argc, char *argv[])
 				samples_for_calc_error_users = atoi(samples.substr(0,pos).c_str());
 				samples_for_calc_error_items = atoi(samples.substr(pos+1).c_str());
 			}
+		}else
+		if( sarg == "--gpu-count")
+		{
+			i++;
+			count_gpu = atoi(argv[i]);
+
 		}
 	}
 
@@ -84,8 +90,9 @@ int main(int argc, char *argv[])
 	std::cerr << " Start Matrix Factorization - Fast ALS " << std::endl;
 	std::cerr << " Input file format -  " << likes_format << std::endl;
 	std::cerr << " ALS alfa -  " << als_alfa << std::endl;
+	std::cerr << " ALS count GPU -  " << count_gpu << std::endl;
 
-	fast_als als_alg(in, features_size, als_alfa, 30, csimples, likes_format, samples_for_calc_error_users, samples_for_calc_error_items);
+	fast_als als_alg(in, features_size, als_alfa, 30, csimples, likes_format, samples_for_calc_error_users, samples_for_calc_error_items, count_gpu);
 
 	struct timeval t1;
 	struct timeval t2;
