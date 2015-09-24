@@ -107,17 +107,16 @@ protected:
 			int in_size,
 			features_vector& out_v,
 			int out_size,
-			int out_full_size,
 			int _count_features_local,
 			std::vector<int>& likes_offsets,
 			int features_local_offset = 0,
 			int out_offset = 0);
 
 
-	void mulYxY(const features_vector& in_v, int in_size, std::vector<float>& ans, cublasHandle_t& cublas_handle,
+	void mulYxY(const features_vector& in_v, int in_size, cublasHandle_t& cublas_handle,
 			cublasStatus_t& cublas_status, int _count_features_local, int features_local_offset);
 
-	fast_als::features_vector calc_g(const features_vector& in_v, int in_size, int _count_features,
+	fast_als::features_vector calc_g(const features_vector& in_v, int in_size,
 			cublasHandle_t& cublas_handle, cublasStatus_t& cublas_status, culaStatus& cula_status,
 			int _count_features_local, int features_local_offset);
 
