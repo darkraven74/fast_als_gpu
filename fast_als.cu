@@ -9,7 +9,7 @@
 #include "fast_als.cuh"
 
 #define BLOCK_SIZE 32
-#define COUNT_ROWS_START 10
+#define COUNT_ROWS_START 100
 
 void checkStatus(culaStatus status)
 {
@@ -107,7 +107,7 @@ void fast_als::read_likes(std::istream& tuples_stream, int count_simples, int fo
 
 		if( format == 0 )
 		{
-			getline(line_stream, value, tab_delim);
+			//getline(line_stream, value, tab_delim);
 //			unsigned long gid = atol(value.c_str());
 		}
 
@@ -121,7 +121,7 @@ void fast_als::read_likes(std::istream& tuples_stream, int count_simples, int fo
 		{
 			getline(line_stream, value, tab_delim);
 			weight_temp = atof( value.c_str() );
-			weight = weight_temp;
+			//weight = weight_temp;
 		}
 
 		if (_items_map.find(iid) == _items_map.end())
@@ -544,87 +544,67 @@ void fast_als::calc_ridge_regression_gpu(
 {
 	d_features_vector d_g(g);
 
-	time_t start = time(0);
-
-	int count_rows = COUNT_ROWS_START;
-//	int count_rows = 1000;
-	count_rows = count_rows >= out_size ? out_size : count_rows;
-	int parts_size = out_size / count_rows + ((out_size % count_rows != 0) ? 1 : 0);
-
-	if (count_rows != out_size)
-	{
-		std::cout << "out size: " << out_size << std::endl;
-		float used_mem = 0;
-		int prev_count_rows = count_rows;
-		size_t cuda_free_mem = 0;
-		size_t cuda_total_mem = 0;
-		cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
-		while ((used_mem < cuda_free_mem * 1.0) && (count_rows < out_size))
-		{
-			prev_count_rows = count_rows;
-			count_rows *= 2;
-			count_rows = count_rows >= out_size ? out_size : count_rows;
-			parts_size = out_size / count_rows + ((out_size % count_rows != 0) ? 1 : 0);
-			float max_sum = 0;
-			for (int i = 0; i < parts_size; i++)
-			{
-				int actual_part_size = (i == parts_size - 1 && out_size % count_rows != 0) ? out_size % count_rows : count_rows;
-				float sum = likes_offsets[out_offset + i * count_rows + actual_part_size] - likes_offsets[out_offset + i * count_rows];
-				if (sum > max_sum)
-				{
-					max_sum = sum;
-				}
-			}
-			used_mem = (max_sum * (2 + _count_features) + count_rows * (_count_features * 2 + 1) + _count_features * _count_features) * 4.0;
-			/*std::cout << "free: " << cuda_free_mem / 1024.0 / 1024.0 << " used: " << used_mem / 1024.0 / 1024.0 << " count_rows: "
-								<< count_rows << std::endl;*/
-		}
-		if (used_mem >= cuda_free_mem * 1.0)
-		{
-			count_rows = prev_count_rows;
-		}
-		count_rows = count_rows >= out_size ? out_size : count_rows;
-		parts_size = out_size / count_rows + ((out_size % count_rows != 0) ? 1 : 0);
-	}
-
-
-	start = time(0) - start;
-
-	std::cout << "calc size time: " << start << std::endl;
-	std::cout << "count_rows: " << count_rows << std::endl;
-
-
 	time_t prepare = 0;
 	time_t kernel = 0;
 
-	for(int part = 0; part < parts_size; part++)
+	int cur_out_start = 0;
+	while (cur_out_start < out_size)
 	{
 		cudaDeviceSynchronize();
 		time_t start = time(0);
 
-		int actual_part_size = (part == parts_size - 1 && out_size % count_rows != 0) ? out_size % count_rows : count_rows;
+		int out_left_size = out_size - cur_out_start;
+		int count_rows = COUNT_ROWS_START;
+		count_rows = count_rows >= out_left_size ? out_left_size : count_rows;
+
+		if (count_rows != out_left_size)
+		{
+			std::cout << "out left size: " << out_left_size << std::endl;
+			float used_mem = 0;
+			int prev_count_rows = count_rows;
+			size_t cuda_free_mem = 0;
+			size_t cuda_total_mem = 0;
+			cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
+			while ((used_mem < cuda_free_mem * 1.0) && (count_rows < out_left_size))
+			{
+				prev_count_rows = count_rows;
+				count_rows += (count_rows / 4);
+				count_rows = count_rows >= out_left_size ? out_left_size : count_rows;
+				float sum = likes_offsets[out_offset + cur_out_start + count_rows] - likes_offsets[out_offset + cur_out_start];
+				used_mem = (sum * (2 + _count_features) + count_rows * (_count_features * 2 + 1) + _count_features * _count_features) * 4.0;
+				std::cout << "free: " << cuda_free_mem / 1024.0 / 1024.0 << " used: " << used_mem / 1024.0 / 1024.0 << " count_rows: "
+									<< count_rows << std::endl;
+			}
+			if (used_mem >= cuda_free_mem * 1.0)
+			{
+				count_rows = prev_count_rows;
+			}
+			count_rows = count_rows >= out_left_size ? out_left_size : count_rows;
+		}
+
+
 		thrust::device_vector<float> d_weights;
-		thrust::device_vector<int> d_likes_offsets(likes_offsets.begin() + out_offset + part * count_rows,
-				likes_offsets.begin() + out_offset + part * count_rows + actual_part_size + 1);
-		int sub = *(likes_offsets.begin() + out_offset + part * count_rows);
+		thrust::device_vector<int> d_likes_offsets(likes_offsets.begin() + out_offset + cur_out_start,
+				likes_offsets.begin() + out_offset + cur_out_start + count_rows + 1);
+		int sub = *(likes_offsets.begin() + out_offset + cur_out_start);
 		thrust::for_each(d_likes_offsets.begin(), d_likes_offsets.end(), thrust::placeholders::_1 -= sub);
 
 		std::vector<float> h_weights;
 		features_vector h_in_v;
 
-		size_t offset = out_offset * _count_features + part * _count_features * count_rows;
+		size_t offset = (out_offset + cur_out_start) * _count_features;
 		d_features_vector d_in_v;
-		d_features_vector d_out_v(out_v.begin() + offset, out_v.begin() + offset + actual_part_size * _count_features);
+		d_features_vector d_out_v(out_v.begin() + offset, out_v.begin() + offset + count_rows * _count_features);
 
 
 		int err_size = 0;
-		for (int i = 0; i < actual_part_size; i++)
+		for (int i = 0; i < count_rows; i++)
 		{
-			h_weights.insert(h_weights.end(), (weights + part * count_rows + i)->begin(), (weights + part * count_rows + i)->end());
-			err_size += (*(likes + part * count_rows + i)).size();
-			for (int j = 0; j < (*(likes + part * count_rows + i)).size(); j++)
+			h_weights.insert(h_weights.end(), (weights + cur_out_start + i)->begin(), (weights + cur_out_start + i)->end());
+			err_size += (*(likes + cur_out_start + i)).size();
+			for (int j = 0; j < (*(likes + cur_out_start + i)).size(); j++)
 			{
-				int id = (*(likes + part * count_rows + i))[j];
+				int id = (*(likes + cur_out_start + i))[j];
 				h_in_v.insert(h_in_v.end(), in_v.begin() + id * _count_features, in_v.begin() + (id + 1) * _count_features);
 			}
 		}
@@ -635,21 +615,14 @@ void fast_als::calc_ridge_regression_gpu(
 
 
 
-		cudaDeviceSynchronize();
-		start = time(0) - start;
-		prepare += start;
-		start = time(0);
 		if ( cudaSuccess != cudaPeekAtLastError() )
 					std::cerr <<  "!WARN - Cuda error (thrust in regression) : "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
 
-		thrust::device_vector<float> errors(err_size + _count_features * actual_part_size);
-
-		dim3 block(BLOCK_SIZE, 1);
-		dim3 grid(1 + actual_part_size / BLOCK_SIZE, 1);
+		thrust::device_vector<float> errors(err_size + _count_features * count_rows);
 
 
-		float size_mbytes = ( err_size * (2 + _count_features ) + actual_part_size * (2 * _count_features + 1)  + _count_features * _count_features)
-				* 4.0 / 1024 / 1024;
+		float size_mbytes = ( err_size * (2 + _count_features ) + count_rows * (2 * _count_features + 1)  + _count_features * _count_features)
+				* 4.0 / 1024.0 / 1024.0;
 		std::cout << "*****GPU data size in MB: " << size_mbytes << std::endl;
 
 		size_t cuda_free_mem = 0;
@@ -658,10 +631,19 @@ void fast_als::calc_ridge_regression_gpu(
 		std::cerr << "Cuda memory used in MB: " << (cuda_total_mem - cuda_free_mem) / 1024.0 / 1024.0 << std::endl;
 
 
+		cudaDeviceSynchronize();
+		start = time(0) - start;
+		prepare += start;
+		start = time(0);
+
+
+		dim3 block(BLOCK_SIZE, 1);
+		dim3 grid(1 + count_rows / BLOCK_SIZE, 1);
+
 
 
 		ridge_regression_kernel<<<grid, block>>>(thrust::raw_pointer_cast(&d_weights[0]),
-				thrust::raw_pointer_cast(&d_in_v[0]), thrust::raw_pointer_cast(&d_out_v[0]), actual_part_size, _count_features,
+				thrust::raw_pointer_cast(&d_in_v[0]), thrust::raw_pointer_cast(&d_out_v[0]), count_rows, _count_features,
 				thrust::raw_pointer_cast(&d_g[0]), thrust::raw_pointer_cast(&d_likes_offsets[0]),
 				_als_alfa, _als_gamma, thrust::raw_pointer_cast(&errors[0]));
 
@@ -681,6 +663,8 @@ void fast_als::calc_ridge_regression_gpu(
 		prepare += start;
 		if ( cudaSuccess != cudaPeekAtLastError() )
 							std::cerr <<  "!WARN - Cuda error (thrust in regression 2) : "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
+
+		cur_out_start += count_rows;
 	}
 	std::cout << "prepare time, s: " << prepare << std::endl;
 	std::cout << "kernel time, s: " << kernel << std::endl;
