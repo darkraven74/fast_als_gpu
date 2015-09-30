@@ -102,7 +102,7 @@ protected:
 	///
 	void solve(
 			const likes_vector::const_iterator& likes,
-			const likes_weights_vector::const_iterator& weights,
+			const std::vector<float>& weights,
 			const features_vector& in_v,
 			int in_size,
 			features_vector& out_v,
@@ -122,7 +122,7 @@ protected:
 
 	void calc_ridge_regression_gpu(
 				const likes_vector::const_iterator& likes,
-				const likes_weights_vector::const_iterator& weights,
+				const std::vector<float>& weights,
 				const features_vector& in_v,
 				features_vector& out_v,
 				int out_size,
@@ -161,6 +161,10 @@ private:
 
 	std::vector<int> d_user_offsets;
 	std::vector<int> d_item_offsets;
+
+	std::vector<float> _user_weights;
+	std::vector<float> _item_weights;
+
 
 	std::vector<float> YxY;
 
