@@ -95,6 +95,7 @@ protected:
 	void fill_rnd(features_vector& in_v, int in_size);
 
 	void calculate_one_gpu(int count_iterations);
+	void fill_parts_vector(std::vector<int>& offsets, int total_elements, std::vector<int>& count_parts);
 	void calculate_multiple_gpus(int count_iterations);
 
 	///

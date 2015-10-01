@@ -9,7 +9,7 @@
 #include "fast_als.cuh"
 
 #define BLOCK_SIZE 8
-#define COUNT_ROWS_START 100
+#define COUNT_ROWS_START 10
 
 void checkStatus(culaStatus status)
 {
@@ -108,7 +108,6 @@ void fast_als::read_likes(std::istream& tuples_stream, int count_simples, int fo
 		if( format == 0 )
 		{
 			//getline(line_stream, value, tab_delim);
-//			unsigned long gid = atol(value.c_str());
 		}
 
 		getline(line_stream, value, tab_delim);
@@ -259,25 +258,56 @@ void fast_als::calculate_one_gpu(int count_iterations)
 	hr10.close();
 }
 
+void fast_als::fill_parts_vector(std::vector<int>& offsets, int total_elements, std::vector<int>& count_parts)
+{
+	int begin_id = 0;
+	int end_id = 1;
+	int count_avg_part = _count_samples / _count_gpus;
+	for (int i = 0; i < _count_gpus - 1; i++)
+	{
+		int count_elements = offsets[end_id] - offsets[begin_id];
+		while ((count_elements < count_avg_part) && (end_id < total_elements))
+		{
+			end_id++;
+			count_elements = offsets[end_id] - offsets[begin_id];
+		}
+		count_parts.push_back(end_id - begin_id);
+		begin_id = end_id;
+		end_id = begin_id + 1;
+	}
+	count_parts.push_back(total_elements - begin_id);
+}
+
 void fast_als::calculate_multiple_gpus(int count_iterations)
 {
+
 	int _count_features_first_part = _count_features / _count_gpus;
 	int _count_features_last_part = _count_features - _count_features_first_part * (_count_gpus - 1);
-
-	int _count_items_first_part = _count_items / _count_gpus;
-	int _count_items_last_part = _count_items - _count_items_first_part * (_count_gpus - 1);
-
-	int _count_users_first_part = _count_users / _count_gpus;
-	int _count_users_last_part = _count_users - _count_users_first_part * (_count_gpus - 1);
 
 	std::vector<int> _count_features_parts(_count_gpus, _count_features_first_part);
 	_count_features_parts.back() = _count_features_last_part;
 
-	std::vector<int> _count_items_parts(_count_gpus, _count_items_first_part);
-	_count_items_parts.back() = _count_items_last_part;
+	std::vector<int> _count_items_parts;
+	std::vector<int> _count_users_parts;
 
-	std::vector<int> _count_users_parts(_count_gpus, _count_users_first_part);
-	_count_users_parts.back() = _count_users_last_part;
+	fill_parts_vector(d_user_offsets, _count_users, _count_users_parts);
+	fill_parts_vector(d_item_offsets, _count_items, _count_items_parts);
+
+
+	std::cout << "items parts: \n";
+	for (int i = 0; i < _count_items_parts.size(); i++)
+	{
+		std::cout << _count_items_parts[i] << " ";
+	}
+	std::cout << "\n*****\n";
+
+	std::cout << "users parts: \n";
+	for (int i = 0; i < _count_users_parts.size(); i++)
+	{
+		std::cout << _count_users_parts[i] << " ";
+	}
+	std::cout << "\n*****\n";
+
 
 	std::vector<int> features_offsets(_count_gpus, 0);
 	std::vector<int> items_offsets(_count_gpus, 0);
@@ -289,7 +319,6 @@ void fast_als::calculate_multiple_gpus(int count_iterations)
 		items_offsets[i] = items_offsets[i - 1] + _count_items_parts[i - 1];
 		users_offsets[i] = users_offsets[i - 1] + _count_users_parts[i - 1];
 	}
-
 
 	std::ofstream hr10("hr10.txt");
 
@@ -568,17 +597,17 @@ void fast_als::calc_ridge_regression_gpu(
 			size_t cuda_free_mem = 0;
 			size_t cuda_total_mem = 0;
 			cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
-			while ((used_mem < cuda_free_mem * 1.0) && (count_rows < out_left_size))
+			while ((used_mem < cuda_free_mem * 0.9) && (count_rows < out_left_size))
 			{
 				prev_count_rows = count_rows;
-				count_rows += (used_mem < cuda_free_mem * 0.7) ? count_rows : (count_rows / 5);
+				count_rows += (used_mem < cuda_free_mem * 0.6) ? (count_rows / 2) : (count_rows / 100);
 				count_rows = count_rows >= out_left_size ? out_left_size : count_rows;
 				float sum = likes_offsets[out_offset + cur_out_start + count_rows] - likes_offsets[out_offset + cur_out_start];
 				used_mem = (sum * (2 + _count_features) + count_rows * (_count_features * 2 + 1) + _count_features * _count_features) * 4.0;
 				/*std::cout << "free: " << cuda_free_mem / 1024.0 / 1024.0 << " used: " << used_mem / 1024.0 / 1024.0 << " count_rows: "
 									<< count_rows << std::endl;*/
 			}
-			if (used_mem >= cuda_free_mem * 1.0)
+			if (used_mem >= cuda_free_mem * 0.9)
 			{
 				count_rows = prev_count_rows;
 			}
@@ -609,7 +638,7 @@ void fast_als::calc_ridge_regression_gpu(
 
 
 
-		#pragma omp parallel for num_threads(24)
+
 		for (int i = 0; i < count_rows; i++)
 		{
 			for (int j = 0; j < (*(likes + cur_out_start + i)).size(); j++)
