@@ -10,6 +10,8 @@
 
 #define BLOCK_SIZE 8
 #define COUNT_ROWS_START 10
+#define COUNT_ROWS_ADD 100
+
 
 void checkStatus(culaStatus status)
 {
@@ -394,7 +396,7 @@ void fast_als::solve(
 //	fill_rnd(g, _count_features);
 	cudaDeviceSynchronize();
 	start = time(0) - start;
-	std::cerr << "g calc: " << start << std::endl;
+	std::cerr << "GPU " << omp_get_thread_num() << " g calc: " << start << std::endl;
 
 	if ( cudaSuccess != cudaPeekAtLastError() )
 				std::cerr <<  "!WARN - Cuda error (g calc) : "  << cudaGetErrorString(cudaGetLastError()) << std::endl;
@@ -402,7 +404,7 @@ void fast_als::solve(
 	start = time(0);
 	calc_ridge_regression_gpu(likes, weights, in_v, out_v, out_size, g, likes_offsets, out_offset);
 	start = time(0) - start;
-	std::cerr << "regression calc: " << start << std::endl;
+	std::cerr << "GPU " << omp_get_thread_num() << " regression calc: " << start << std::endl;
 
 	culaShutdown();
 	cublas_status = cublasDestroy(cublas_handle);
@@ -600,7 +602,7 @@ void fast_als::calc_ridge_regression_gpu(
 			while ((used_mem < cuda_free_mem * 0.9) && (count_rows < out_left_size))
 			{
 				prev_count_rows = count_rows;
-				count_rows += (used_mem < cuda_free_mem * 0.6) ? (count_rows / 2) : (count_rows / 100);
+				count_rows += (used_mem < cuda_free_mem * 0.6) ? ((count_rows + COUNT_ROWS_ADD) / 2) : ((count_rows + COUNT_ROWS_ADD) / 100);
 				count_rows = count_rows >= out_left_size ? out_left_size : count_rows;
 				float sum = likes_offsets[out_offset + cur_out_start + count_rows] - likes_offsets[out_offset + cur_out_start];
 				used_mem = (sum * (2 + _count_features) + count_rows * (_count_features * 2 + 1) + _count_features * _count_features) * 4.0;
@@ -612,6 +614,7 @@ void fast_als::calc_ridge_regression_gpu(
 				count_rows = prev_count_rows;
 			}
 			count_rows = count_rows >= out_left_size ? out_left_size : count_rows;
+			std::cout << "block_size calculated: " << count_rows << std::endl;
 		}
 
 		int err_size = likes_offsets[out_offset + cur_out_start + count_rows] - likes_offsets[out_offset + cur_out_start];
@@ -707,8 +710,8 @@ void fast_als::calc_ridge_regression_gpu(
 
 		cur_out_start += count_rows;
 	}
-	std::cout << "prepare time, s: " << prepare << std::endl;
-	std::cout << "kernel time, s: " << kernel << std::endl;
+	std::cout << "GPU " << omp_get_thread_num() << " prepare time, s: " << prepare << std::endl;
+	std::cout << "GPU " << omp_get_thread_num() << " kernel time, s: " << kernel << std::endl;
 }
 
 void fast_als::MSE()
@@ -826,25 +829,43 @@ void fast_als::init_helper_vectors()
 {
 	d_user_offsets.push_back(0);
 	int size = _user_likes[0].size();
+	double max_size = size;
+	double sum = size;
 	_user_weights.insert(_user_weights.end(), (_user_likes_weights.begin())->begin(), (_user_likes_weights.begin())->end());
 	for (int i = 1; i < _count_users; i++)
 	{
 		d_user_offsets.push_back(d_user_offsets.back() + size);
 		size = _user_likes[i].size();
 		_user_weights.insert(_user_weights.end(), (_user_likes_weights.begin() + i)->begin(), (_user_likes_weights.begin() + i)->end());
+		if (size > max_size)
+		{
+			max_size = size;
+		}
+		sum += size;
 	}
+
+	std::cout << "Users stat:\n max_size: " << max_size << " avg_size: " << sum / _count_users << "\n";
 	d_user_offsets.push_back(d_user_offsets.back() + size);
 	_user_likes_weights.clear();
 
 	d_item_offsets.push_back(0);
 	size = _item_likes[0].size();
+	max_size = size;
+	sum = size;
 	_item_weights.insert(_item_weights.end(), (_item_likes_weights.begin())->begin(), (_item_likes_weights.begin())->end());
 	for (int i = 1; i < _count_items; i++)
 	{
 		d_item_offsets.push_back(d_item_offsets.back() + size);
 		size = _item_likes[i].size();
 		_item_weights.insert(_item_weights.end(), (_item_likes_weights.begin() + i)->begin(), (_item_likes_weights.begin() + i)->end());
+		if (size > max_size)
+		{
+			max_size = size;
+		}
+		sum += size;
 	}
+	std::cout << "Items stat:\n max_size: " << max_size << " avg_size: " << sum / _count_items << "\n";
+
 	d_item_offsets.push_back(d_item_offsets.back() + size);
 	_item_likes_weights.clear();
 }
