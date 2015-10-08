@@ -91,7 +91,7 @@ int main(int argc, char *argv[])
 	std::cerr << " ALS alfa -  " << als_alfa << std::endl;
 	std::cerr << " ALS count GPU -  " << count_gpu << std::endl;
 
-	fast_als als_alg(in, features_size, als_alfa, 30, csimples, likes_format, samples_for_calc_error_users, samples_for_calc_error_items, count_gpu);
+	fast_als als_alg(in, features_size, als_alfa, 100, csimples, likes_format, samples_for_calc_error_users, samples_for_calc_error_items, count_gpu);
 
 	struct timeval t1;
 	struct timeval t2;
@@ -102,7 +102,7 @@ int main(int argc, char *argv[])
 
 	std::cout << "als calc time: " << t2.tv_sec - t1.tv_sec << std::endl;
 
-	std::ofstream fout_users((output_file_name+".ufea").c_str());
+	/*std::ofstream fout_users((output_file_name+".ufea").c_str());
 	als_alg.serialize_users(fout_users);
 	fout_users.close();
 
@@ -116,7 +116,7 @@ int main(int argc, char *argv[])
 
 	std::ofstream fout_imap((output_file_name+".imap").c_str());
 	als_alg.serialize_items_map(fout_imap);
-	fout_imap.close();
+	fout_imap.close();*/
 
 	return 0;
 }

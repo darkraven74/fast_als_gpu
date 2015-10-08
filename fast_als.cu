@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <set>
 #include <map>
+#include <string>
 #include <ctime>
 #include <thrust/functional.h>
 #include <omp.h>
@@ -66,12 +67,12 @@ fast_als::fast_als(std::istream& tuples_stream,
 		_count_gpus = cout_dev;
 	}
 
-//	srand(time(NULL));
-	srand(34);
+	srand(time(NULL));
+	//srand(34);
 
 	read_likes(tuples_stream, count_samples, likes_format);
 
-	//generate_test_set();
+	generate_test_set();
 
 	_features_users.assign(_count_users * _count_features, 0 );
 	_features_items.assign(_count_items * _count_features, 0 );
@@ -89,11 +90,16 @@ void fast_als::read_likes(std::istream& tuples_stream, int count_simples, int fo
 	char const tab_delim = '\t';
 	int i = 0;
 
+	std::set<std::string> s;
+
+
 	while(getline(tuples_stream, line))
 	{
+		std::string set_str;
 		std::istringstream line_stream(line);
 		std::string value;
 		getline(line_stream, value, tab_delim);
+		set_str = value + " ";
 		unsigned long uid = atol(value.c_str());
 
 		if (_users_map.find(uid) == _users_map.end())
@@ -113,6 +119,8 @@ void fast_als::read_likes(std::istream& tuples_stream, int count_simples, int fo
 		}
 
 		getline(line_stream, value, tab_delim);
+		set_str += value;
+		s.insert(set_str);
 		unsigned long iid = atol(value.c_str());
 		float weight = 1;
 
@@ -160,6 +168,8 @@ void fast_als::read_likes(std::istream& tuples_stream, int count_simples, int fo
 
 	std::cout.flush();
 
+	std::cout << "unique ratings: " << s.size() << std::endl;
+
 //	std::cout << "csamples: " << _count_samples << std::endl;
 
 	std::cout << "\ntotal:\n u: " << _count_users << " i: " << _count_items << std::endl;
@@ -167,17 +177,18 @@ void fast_als::read_likes(std::istream& tuples_stream, int count_simples, int fo
 
 void fast_als::generate_test_set()
 {
-	for (int i = 0; i < _count_users; i++)
+	for (int idx = 0; idx < 100; idx++)
 	{
+		int i = rand() % _count_users;
 		int size = _user_likes[i].size();
 		for (int j = 0; j < size / 2;)
 		{
 			int id = rand() % _user_likes[i].size();
 
-			if (_user_likes_weights_temp[i][id] < 4)
+			/*if (_user_likes_weights_temp[i][id] < 4)
 			{
 				continue;
-			}
+			}*/
 
 			test_set.push_back(std::make_pair(i, _user_likes[i][id]));
 
@@ -254,7 +265,7 @@ void fast_als::calculate_one_gpu(int count_iterations)
 		std::cerr << "==== Iteration time : " << end - start << std::endl;
 
 		//MSE();
-		//hr10 << hit_rate() << std::endl;
+		hr10 << hit_rate_cpu() << std::endl;
 	}
 
 	hr10.close();
@@ -282,7 +293,6 @@ void fast_als::fill_parts_vector(std::vector<int>& offsets, int total_elements, 
 
 void fast_als::calculate_multiple_gpus(int count_iterations)
 {
-
 	int _count_features_first_part = _count_features / _count_gpus;
 	int _count_features_last_part = _count_features - _count_features_first_part * (_count_gpus - 1);
 
@@ -309,6 +319,7 @@ void fast_als::calculate_multiple_gpus(int count_iterations)
 		std::cout << _count_users_parts[i] << " ";
 	}
 	std::cout << "\n*****\n";
+
 
 
 	std::vector<int> features_offsets(_count_gpus, 0);
@@ -366,7 +377,7 @@ void fast_als::calculate_multiple_gpus(int count_iterations)
 		std::cerr << "==== Iteration time : " << end - start << std::endl;
 
 		//MSE();
-		//hr10 << hit_rate() << std::endl;
+		hr10 << hit_rate_cpu() << std::endl;
 	}
 	hr10.close();
 }
@@ -566,6 +577,8 @@ __global__ void ridge_regression_kernel(const float* weights, const float* in_v,
 	}
 }
 
+
+
 void fast_als::calc_ridge_regression_gpu(
 		const likes_vector::const_iterator& likes,
 		const std::vector<float>& weights,
@@ -599,20 +612,46 @@ void fast_als::calc_ridge_regression_gpu(
 			size_t cuda_free_mem = 0;
 			size_t cuda_total_mem = 0;
 			cudaMemGetInfo(&cuda_free_mem, &cuda_total_mem);
-			while ((used_mem < cuda_free_mem * 0.9) && (count_rows < out_left_size))
+
+			int left = count_rows;
+			int right = out_left_size;
+			while ((right - left > 3) && (count_rows < out_left_size))
 			{
 				prev_count_rows = count_rows;
-				count_rows += (used_mem < cuda_free_mem * 0.6) ? ((count_rows + COUNT_ROWS_ADD) / 2) : ((count_rows + COUNT_ROWS_ADD) / 100);
+				count_rows = (left + right) / 2;
 				count_rows = count_rows >= out_left_size ? out_left_size : count_rows;
 				float sum = likes_offsets[out_offset + cur_out_start + count_rows] - likes_offsets[out_offset + cur_out_start];
 				used_mem = (sum * (2 + _count_features) + count_rows * (_count_features * 2 + 1) + _count_features * _count_features) * 4.0;
-				/*std::cout << "free: " << cuda_free_mem / 1024.0 / 1024.0 << " used: " << used_mem / 1024.0 / 1024.0 << " count_rows: "
-									<< count_rows << std::endl;*/
+				if (used_mem >= cuda_free_mem * 0.97)
+				{
+					right = count_rows;
+				}
+				else
+				{
+					left = count_rows;
+				}
+			}
+			if (used_mem >= cuda_free_mem * 0.97)
+			{
+				count_rows = left;
+			}
+
+			/*while ((used_mem < cuda_free_mem * 0.9) && (count_rows < out_left_size))
+			{
+				prev_count_rows = count_rows;
+//				count_rows += (used_mem < cuda_free_mem * 0.6) ? ((count_rows + COUNT_ROWS_ADD) / 2) : ((count_rows + COUNT_ROWS_ADD) / 100);
+				count_rows += (used_mem < cuda_free_mem * 0.8) ? (count_rows) : (count_rows  / 10);
+
+				count_rows = count_rows >= out_left_size ? out_left_size : count_rows;
+				float sum = likes_offsets[out_offset + cur_out_start + count_rows] - likes_offsets[out_offset + cur_out_start];
+				used_mem = (sum * (2 + _count_features) + count_rows * (_count_features * 2 + 1) + _count_features * _count_features) * 4.0;
+				std::cout << "free: " << cuda_free_mem / 1024.0 / 1024.0 << " used: " << used_mem / 1024.0 / 1024.0 << " count_rows: "
+									<< count_rows << std::endl;
 			}
 			if (used_mem >= cuda_free_mem * 0.9)
 			{
 				count_rows = prev_count_rows;
-			}
+			}*/
 			count_rows = count_rows >= out_left_size ? out_left_size : count_rows;
 			std::cout << "block_size calculated: " << count_rows << std::endl;
 		}
@@ -770,6 +809,52 @@ float fast_als::hit_rate()
 		}
 	}
 	float hr10 = tp * 1.0 / test_set_set.size();
+
+	std::cout << hr10 << std::endl;
+
+	return hr10;
+}
+
+
+float fast_als::hit_rate_cpu()
+{
+	float tp = 0;
+	for (int i = 0; i < test_set.size(); i++)
+	{
+		int user = test_set[i].first;
+		int item = test_set[i].second;
+		std::vector<float> predict(_count_items);
+		#pragma omp parallel for num_threads(24)
+		for (int j = 0; j < _count_items; j++)
+		{
+			float sum = 0;
+			for (int k = 0; k < _count_features; k++)
+			{
+				sum += _features_users[user * _count_features + k] * _features_items[j * _count_features + k];
+			}
+			predict[j] = sum;
+		}
+
+		for (unsigned int j = 0; j < _user_likes[user].size(); j++)
+		{
+			int item_id = _user_likes[user][j];
+			predict[item_id] = -1000000;
+		}
+
+		for (int j = 0; j < 10; j++)
+		{
+			std::vector<float>::iterator it = std::max_element(predict.begin(), predict.end());
+			int top_item = std::distance(predict.begin(), it);
+			predict[top_item] = -1000000;
+			if (top_item == item)
+			{
+				tp++;
+				break;
+			}
+		}
+	}
+
+	float hr10 = tp * 1.0 / test_set.size();
 
 	std::cout << hr10 << std::endl;
 
