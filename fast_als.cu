@@ -844,7 +844,7 @@ void fast_als::calc_ridge_regression_gpu(
 		cudaDeviceSynchronize();
 
 
-		/*for (int k = 0; k < _count_features; k++)
+		for (int k = 0; k < _count_features; k++)
 		{
 
 			thrust::device_vector<float> d_out_new(count_rows);
@@ -875,15 +875,15 @@ void fast_als::calc_ridge_regression_gpu(
 			update_out_kernel<<<grid_1d, block_1d>>>(thrust::raw_pointer_cast(&d_out_v[0]), count_rows, _count_features,
 										thrust::raw_pointer_cast(&d_out_new[0]), k);
 			cudaDeviceSynchronize();
-		}*/
+		}
 
 
 
 
-		ridge_regression_kernel<<<grid_1d, block_1d>>>(thrust::raw_pointer_cast(&d_weights[0]),
+		/*ridge_regression_kernel<<<grid_1d, block_1d>>>(thrust::raw_pointer_cast(&d_weights[0]),
 				thrust::raw_pointer_cast(&d_in_v[0]), thrust::raw_pointer_cast(&d_out_v[0]), count_rows, _count_features,
 				thrust::raw_pointer_cast(&d_g[0]), thrust::raw_pointer_cast(&d_likes_offsets[0]),
-				_als_alfa, _als_gamma, thrust::raw_pointer_cast(&errors[0]));
+				_als_alfa, _als_gamma, thrust::raw_pointer_cast(&errors[0]));*/
 
 		cudaDeviceSynchronize();
 		start = time(0) - start;
