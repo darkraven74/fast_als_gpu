@@ -167,6 +167,8 @@ private:
 	std::vector<float> _user_weights;
 	std::vector<float> _item_weights;
 
+	int max_likes_size;
+
 
 	std::vector<float> YxY;
 
