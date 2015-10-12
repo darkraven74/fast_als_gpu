@@ -111,6 +111,7 @@ protected:
 			int out_size,
 			int _count_features_local,
 			std::vector<int>& likes_offsets,
+			int max_likes_size,
 			int features_local_offset = 0,
 			int out_offset = 0);
 
@@ -130,7 +131,8 @@ protected:
 				int out_size,
 				features_vector& g,
 				std::vector<int>& likes_offsets,
-				int out_offset);
+				int out_offset,
+				int max_likes_size);
 
 	void generate_test_set();
 
@@ -167,7 +169,8 @@ private:
 	std::vector<float> _user_weights;
 	std::vector<float> _item_weights;
 
-	int max_likes_size;
+	int max_likes_users;
+	int max_likes_items;
 
 
 	std::vector<float> YxY;
