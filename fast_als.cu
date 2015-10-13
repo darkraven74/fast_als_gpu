@@ -508,7 +508,8 @@ __global__ void ridge_regression_kernel(const float* weights, const float* in_v,
 		int _count_features, float* g, int* likes_offsets, float _als_alfa, float _als_gamma, float* errors)
 {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
-	if (x < out_size)
+	int k = blockIdx.y * blockDim.y + threadIdx.y;
+	if ((x < out_size) && (k < _count_features))
 	{
 		int id = x;
 		int in_offset = likes_offsets[id];
@@ -540,8 +541,8 @@ __global__ void ridge_regression_kernel(const float* weights, const float* in_v,
 			errors[error_g_offset + i] = -sum;
 		}*/
 
-		for (int k = 0; k < _count_features; k++)
-		{
+		//for (int k = 0; k < _count_features; k++)
+		//{
 			float out_v_cur = out_v[out_offset + k];
 
 			float a = 0;
@@ -564,7 +565,7 @@ __global__ void ridge_regression_kernel(const float* weights, const float* in_v,
 
 			out_v[out_offset + k] = out_v_cur_new;
 
-			float out_diff = out_v_cur - out_v_cur_new;
+			/*float out_diff = out_v_cur - out_v_cur_new;
 
 			for (int i = 0; i < in_size; i++)
 			{
@@ -573,16 +574,17 @@ __global__ void ridge_regression_kernel(const float* weights, const float* in_v,
 			for (int i = 0; i < _count_features; i++)
 			{
 				errors[error_g_offset + i] += out_diff * g[k * _count_features + i];
-			}
-		}
+			}*/
+		//}
 	}
 }
 
 __global__ void calc_new_out_kernel(const float* weights, const float* in_v, float* out_v, int out_size,
-		int _count_features, float* g, int* likes_offsets, float _als_alfa, float _als_gamma, float* errors, float* new_out_v, int k)
+		int _count_features, float* g, int* likes_offsets, float _als_alfa, float _als_gamma, float* errors)
 {
 	int out_id = blockIdx.x * blockDim.x + threadIdx.x;
-	if (out_id < out_size)
+	int k = blockIdx.y * blockDim.y + threadIdx.y;
+	if (out_id < out_size && k < _count_features)
 	{
 		int in_offset = likes_offsets[out_id];
 		int in_size = likes_offsets[out_id + 1] - in_offset;
@@ -605,7 +607,7 @@ __global__ void calc_new_out_kernel(const float* weights, const float* in_v, flo
 			a += g_cur * g_cur;
 			d += g_cur * (errors[error_g_offset + i] + out_v_cur * g_cur);
 		}
-		new_out_v[out_id] = d / (_als_gamma + a);
+		out_v[out_id * _count_features + k] = d / (_als_gamma + a);
 	}
 }
 
@@ -843,25 +845,26 @@ void fast_als::calc_ridge_regression_gpu(
 
 		cudaDeviceSynchronize();
 
+		dim3 grid_regr(1 + count_rows / BLOCK_SIZE, 1 + _count_features / BLOCK_SIZE);
 
-		for (int k = 0; k < _count_features; k++)
-		{
 
-			thrust::device_vector<float> d_out_new(count_rows);
+		//for (int k = 0; k < _count_features; k++)
+		//{
 
-			calc_new_out_kernel<<<grid_1d, block_1d>>>(thrust::raw_pointer_cast(&d_weights[0]),
+			//thrust::device_vector<float> d_out_new(count_rows);
+
+			/*calc_new_out_kernel<<<grid_regr, block>>>(thrust::raw_pointer_cast(&d_weights[0]),
 								thrust::raw_pointer_cast(&d_in_v[0]), thrust::raw_pointer_cast(&d_out_v[0]), count_rows, _count_features,
 								thrust::raw_pointer_cast(&d_g[0]), thrust::raw_pointer_cast(&d_likes_offsets[0]),
-								_als_alfa, _als_gamma, thrust::raw_pointer_cast(&errors[0]), thrust::raw_pointer_cast(&d_out_new[0]),
-								k);
+								_als_alfa, _als_gamma, thrust::raw_pointer_cast(&errors[0]));
 
 
-			cudaDeviceSynchronize();
+			cudaDeviceSynchronize();*/
 
 
 
 
-			recalc_error_kernel<<<grid, block>>>(
+			/*recalc_error_kernel<<<grid, block>>>(
 									thrust::raw_pointer_cast(&d_in_v[0]), thrust::raw_pointer_cast(&d_out_v[0]), count_rows, _count_features,
 									thrust::raw_pointer_cast(&d_likes_offsets[0]),
 									thrust::raw_pointer_cast(&errors[0]), thrust::raw_pointer_cast(&d_out_new[0]), k);
@@ -874,16 +877,17 @@ void fast_als::calc_ridge_regression_gpu(
 
 			update_out_kernel<<<grid_1d, block_1d>>>(thrust::raw_pointer_cast(&d_out_v[0]), count_rows, _count_features,
 										thrust::raw_pointer_cast(&d_out_new[0]), k);
-			cudaDeviceSynchronize();
-		}
+			cudaDeviceSynchronize();*/
+		//}
 
 
 
 
-		/*ridge_regression_kernel<<<grid_1d, block_1d>>>(thrust::raw_pointer_cast(&d_weights[0]),
+		ridge_regression_kernel<<<grid_regr, block>>>(thrust::raw_pointer_cast(&d_weights[0]),
 				thrust::raw_pointer_cast(&d_in_v[0]), thrust::raw_pointer_cast(&d_out_v[0]), count_rows, _count_features,
 				thrust::raw_pointer_cast(&d_g[0]), thrust::raw_pointer_cast(&d_likes_offsets[0]),
-				_als_alfa, _als_gamma, thrust::raw_pointer_cast(&errors[0]));*/
+				_als_alfa, _als_gamma, thrust::raw_pointer_cast(&errors[0]));
+
 
 		cudaDeviceSynchronize();
 		start = time(0) - start;
