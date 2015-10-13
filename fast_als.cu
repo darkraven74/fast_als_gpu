@@ -492,6 +492,16 @@ fast_als::features_vector fast_als::calc_g(const features_vector& in_v, int in_s
 	}
 	#pragma omp barrier
 
+
+	std::cout << "cula svd..\n";
+	for (int i = 0; i < _count_features; i++)
+	{
+		for (int j = 0; j < _count_features; j++)
+		{
+			std::cout << YxY[i * _count_features + j] << " ";
+		}
+		std::cout << "\n";
+	}
 	cula_status = culaSgesvd('N', 'S', _count_features, _count_features, &YxY[0], _count_features, &S[0], NULL,
 			_count_features, &U[0], _count_features);
 	checkStatus(cula_status);
@@ -897,6 +907,8 @@ void fast_als::calc_ridge_regression_gpu(
 				thrust::raw_pointer_cast(&d_g[0]), thrust::raw_pointer_cast(&d_likes_offsets[0]),
 				_als_alfa, _als_gamma, thrust::raw_pointer_cast(&errors[0]));
 
+
+		cudaDeviceSynchronize();
 		cudaError_t lastErr = cudaGetLastError();
 		if (lastErr != cudaSuccess)
 		{
