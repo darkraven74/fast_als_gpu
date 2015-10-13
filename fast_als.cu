@@ -910,7 +910,7 @@ void fast_als::calc_ridge_regression_gpu(
 		start = time(0) - start;
 		kernel += start;
 		start = time(0);
-		cudaError_t lastErr = cudaGetLastError();
+		lastErr = cudaGetLastError();
 		if (lastErr != cudaSuccess)
 		{
 			std::cout << "cuda error in kernel! " << cudaGetErrorString(lastErr) <<  std::endl;
