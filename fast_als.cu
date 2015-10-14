@@ -494,9 +494,9 @@ fast_als::features_vector fast_als::calc_g(const features_vector& in_v, int in_s
 
 
 	std::cout << "cula svd..\n";
-	for (int i = 0; i < _count_features; i++)
+	for (int i = 0; i < 1; i++)
 	{
-		for (int j = 0; j < _count_features; j++)
+		for (int j = 0; j < 5; j++)
 		{
 			std::cout << YxY[i * _count_features + j] << " ";
 		}
@@ -844,8 +844,10 @@ void fast_als::calc_ridge_regression_gpu(
 		prepare += start;
 		start = time(0);
 
-		//for (int gg = 0; gg < 10; gg++)
-		//{
+		cudaError_t lastErr;
+
+		for (int gg = 0; gg < 10; gg++)
+		{
 
 		dim3 block_1d(BLOCK_SIZE);
 		dim3 grid_1d(1 + count_rows / BLOCK_SIZE);
@@ -909,13 +911,13 @@ void fast_als::calc_ridge_regression_gpu(
 
 
 		cudaDeviceSynchronize();
-		cudaError_t lastErr = cudaGetLastError();
+		lastErr = cudaGetLastError();
 		if (lastErr != cudaSuccess)
 		{
 			std::cout << "cuda error in kernel! " << cudaGetErrorString(lastErr) <<  std::endl;
 		}
 
-		//}
+		}
 
 
 		cudaDeviceSynchronize();
@@ -1006,6 +1008,10 @@ float fast_als::hit_rate()
 
 float fast_als::hit_rate_cpu()
 {
+	if (!test_set.size())
+	{
+		return 0;
+	}
 	float tp = 0;
 	for (int i = 0; i < test_set.size(); i++)
 	{
