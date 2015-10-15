@@ -72,7 +72,7 @@ fast_als::fast_als(std::istream& tuples_stream,
 
 	read_likes(tuples_stream, count_samples, likes_format);
 
-	//generate_test_set();
+	generate_test_set();
 
 	_features_users.assign(_count_users * _count_features, 0 );
 	_features_items.assign(_count_items * _count_features, 0 );
@@ -498,7 +498,7 @@ fast_als::features_vector fast_als::calc_g(const features_vector& in_v, int in_s
 	{
 		for (int j = 0; j < 5; j++)
 		{
-			std::cout << YxY[i * _count_features + j] << " ";
+			std::cout << in_v[i * _count_features + j] << " ";
 		}
 		std::cout << "\n";
 	}
@@ -846,7 +846,7 @@ void fast_als::calc_ridge_regression_gpu(
 
 		cudaError_t lastErr;
 
-		for (int gg = 0; gg < 10; gg++)
+		for (int gg = 0; gg < 1; gg++)
 		{
 
 		dim3 block_1d(BLOCK_SIZE);
