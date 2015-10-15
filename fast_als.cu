@@ -72,7 +72,7 @@ fast_als::fast_als(std::istream& tuples_stream,
 
 	read_likes(tuples_stream, count_samples, likes_format);
 
-	//generate_test_set();
+	generate_test_set();
 
 	_features_users.assign(_count_users * _count_features, 0 );
 	_features_items.assign(_count_items * _count_features, 0 );
@@ -990,6 +990,20 @@ float fast_als::hit_rate_cpu()
 	{
 		return 0;
 	}
+
+	std::cout << "items fea:\n";
+	for (int i = 0; i < 5; i++)
+	{
+		std::cout << _features_items[i] << " ";
+	}
+	std::cout << "\n users fea:\n";
+
+	for (int i = 0; i < 5; i++)
+	{
+		std::cout << _features_users[i] << " ";
+	}
+	std::cout << "\n";
+
 	float tp = 0;
 	for (int i = 0; i < test_set.size(); i++)
 	{
