@@ -1012,6 +1012,21 @@ float fast_als::hit_rate_cpu()
 	{
 		return 0;
 	}
+
+	std::cout << "items fea:\n";
+	for (int i = 0; i < 5; i++)
+	{
+		std::cout << _features_items[i] << " ";
+	}
+	std::cout << "\n users fea:\n";
+
+	for (int i = 0; i < 5; i++)
+	{
+		std::cout << _features_users[i] << " ";
+	}
+	std::cout << "\n";
+
+
 	float tp = 0;
 	for (int i = 0; i < test_set.size(); i++)
 	{
