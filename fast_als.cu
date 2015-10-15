@@ -72,7 +72,7 @@ fast_als::fast_als(std::istream& tuples_stream,
 
 	read_likes(tuples_stream, count_samples, likes_format);
 
-	generate_test_set();
+	//generate_test_set();
 
 	_features_users.assign(_count_users * _count_features, 0 );
 	_features_items.assign(_count_items * _count_features, 0 );
@@ -146,11 +146,17 @@ void fast_als::read_likes(std::istream& tuples_stream, int count_simples, int fo
 		/// adding data to user likes
 		/// and to item likes
 		///
-		_user_likes[user].push_back( item );
-		_user_likes_weights[user].push_back( weight );
-		_user_likes_weights_temp[user].push_back( weight_temp );
-		_item_likes[item].push_back( user );
-		_item_likes_weights[item].push_back( weight );
+
+		int max_size = 500000;
+		if (_user_likes[user].size() < max_size && _item_likes[item].size() < max_size)
+		{
+			_user_likes[user].push_back( item );
+			_user_likes_weights[user].push_back( weight );
+			_user_likes_weights_temp[user].push_back( weight_temp );
+			_item_likes[item].push_back( user );
+			_item_likes_weights[item].push_back( weight );
+		}
+
 
 		if (i % 10000 == 0) std::cout << i << " u: " << _count_users << " i: " << _count_items << "\r";
 
