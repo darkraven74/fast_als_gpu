@@ -67,12 +67,12 @@ fast_als::fast_als(std::istream& tuples_stream,
 		_count_gpus = cout_dev;
 	}
 
-	srand(time(NULL));
-	//srand(34);
+	//srand(time(NULL));
+	srand(34);
 
 	read_likes(tuples_stream, count_samples, likes_format);
 
-	//generate_test_set();
+	generate_test_set();
 
 	_features_users.assign(_count_users * _count_features, 0 );
 	_features_items.assign(_count_items * _count_features, 0 );
@@ -177,18 +177,19 @@ void fast_als::read_likes(std::istream& tuples_stream, int count_simples, int fo
 
 void fast_als::generate_test_set()
 {
-	for (int idx = 0; idx < 100; idx++)
+//	for (int idx = 0; idx < 100; idx++)
+	for (int i = 0; i < _count_users; i++)
 	{
-		int i = rand() % _count_users;
+//		int i = rand() % _count_users;
 		int size = _user_likes[i].size();
 		for (int j = 0; j < size / 2;)
 		{
 			int id = rand() % _user_likes[i].size();
 
-			/*if (_user_likes_weights_temp[i][id] < 4)
+			if (_user_likes_weights_temp[i][id] < 4)
 			{
 				continue;
-			}*/
+			}
 
 			test_set.push_back(std::make_pair(i, _user_likes[i][id]));
 
@@ -265,7 +266,7 @@ void fast_als::calculate_one_gpu(int count_iterations)
 		std::cerr << "==== Iteration time : " << end - start << std::endl;
 
 		//MSE();
-		//hr10 << hit_rate_cpu() << std::endl;
+		hr10 << hit_rate_cpu() << std::endl;
 	}
 
 	hr10.close();
@@ -377,7 +378,7 @@ void fast_als::calculate_multiple_gpus(int count_iterations)
 		std::cerr << "==== Iteration time : " << end - start << std::endl;
 
 		//MSE();
-		//hr10 << hit_rate_cpu() << std::endl;
+		hr10 << hit_rate_cpu() << std::endl;
 	}
 	hr10.close();
 }
@@ -485,6 +486,12 @@ fast_als::features_vector fast_als::calc_g(const features_vector& in_v, int in_s
 
 	cudaDeviceSynchronize();
 	#pragma omp barrier
+
+	for (int i = 0; i < 5; i++)
+	{
+		std::cout << in_v[i] << " ";
+	}
+	std::cout << std::endl;
 
 	cula_status = culaSgesvd('N', 'S', _count_features, _count_features, &YxY[0], _count_features, &S[0], NULL,
 			_count_features, &U[0], _count_features);
@@ -973,6 +980,10 @@ float fast_als::hit_rate()
 
 float fast_als::hit_rate_cpu()
 {
+	if (!test_set.size())
+	{
+		return 0;
+	}
 	float tp = 0;
 	for (int i = 0; i < test_set.size(); i++)
 	{
