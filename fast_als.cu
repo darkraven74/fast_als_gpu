@@ -72,7 +72,7 @@ fast_als::fast_als(std::istream& tuples_stream,
 
 	read_likes(tuples_stream, count_samples, likes_format);
 
-	generate_test_set();
+	//generate_test_set();
 
 	_features_users.assign(_count_users * _count_features, 0 );
 	_features_items.assign(_count_items * _count_features, 0 );
@@ -147,7 +147,7 @@ void fast_als::read_likes(std::istream& tuples_stream, int count_simples, int fo
 		/// and to item likes
 		///
 
-		int max_size = 500000;
+		int max_size = 1000000;
 		if (_user_likes[user].size() < max_size && _item_likes[item].size() < max_size)
 		{
 			_user_likes[user].push_back( item );
@@ -517,80 +517,6 @@ fast_als::features_vector fast_als::calc_g(const features_vector& in_v, int in_s
 	return G;
 }
 
-__global__ void ridge_regression_kernel(const float* weights, const float* in_v, float* out_v, int out_size,
-		int _count_features, float* g, int* likes_offsets, float _als_alfa, float _als_gamma, float* errors)
-{
-	int x = blockIdx.x * blockDim.x + threadIdx.x;
-	if (x < out_size)
-	{
-		int id = x;
-		int in_offset = likes_offsets[id];
-		int in_size = likes_offsets[id + 1] - in_offset;
-		int error_offset = in_offset + id * _count_features;
-		int error_g_offset = error_offset + in_size;
-		int out_offset = id * _count_features;
-		int in_offset_features = in_offset * _count_features;
-
-		/*for (int i = 0; i < in_size; i++)
-		{
-			int in_cur_off = in_offset_features + i * _count_features;
-			float sum = 0;
-			for (int j = 0; j < _count_features; j++)
-			{
-				sum += out_v[out_offset + j] * in_v[in_cur_off + j];
-			}
-			float c = 1 + _als_alfa * weights[in_offset + i];
-			errors[error_offset + i] = (c / (c - 1)) - sum;
-		}
-
-		for (int i = 0; i < _count_features; i++)
-		{
-			float sum = 0;
-			for (int j = 0; j < _count_features; j++)
-			{
-				sum += out_v[out_offset + j] * g[j * _count_features + i];
-			}
-			errors[error_g_offset + i] = -sum;
-		}*/
-
-		for (int k = 0; k < _count_features; k++)
-		{
-			float out_v_cur = out_v[out_offset + k];
-
-			float a = 0;
-			float d = 0;
-			for (int i = 0; i < in_size; i++)
-			{
-				float c = _als_alfa * weights[in_offset + i];
-				float in_v_cur =  in_v[in_offset_features + i * _count_features + k];
-				a += c * in_v_cur * in_v_cur;
-				d += c * in_v_cur * (errors[error_offset + i] + out_v_cur * in_v_cur);
-			}
-			for (int i = 0; i < _count_features; i++)
-			{
-				float g_cur = g[k * _count_features + i];
-				a += g_cur * g_cur;
-				d += g_cur * (errors[error_g_offset + i] + out_v_cur * g_cur);
-			}
-
-			float out_v_cur_new = d / (_als_gamma + a);
-
-			out_v[out_offset + k] = out_v_cur_new;
-
-			float out_diff = out_v_cur - out_v_cur_new;
-
-			for (int i = 0; i < in_size; i++)
-			{
-				errors[error_offset + i] += out_diff * in_v[in_offset_features + i * _count_features + k];
-			}
-			for (int i = 0; i < _count_features; i++)
-			{
-				errors[error_g_offset + i] += out_diff * g[k * _count_features + i];
-			}
-		}
-	}
-}
-
 __global__ void calc_new_out_kernel(const float* weights, const float* in_v, float* out_v, int out_size,
 		int _count_features, float* g, int* likes_offsets, float _als_alfa, float _als_gamma, float* errors, float* new_out_v, int k)
 {
@@ -641,8 +567,6 @@ __global__ void calc_error_kernel(const float* weights, const float* in_v, float
 			}
 			float c = 1 + _als_alfa * weights[in_offset + in_id];
 			errors[in_offset + out_offset + in_id] = (c / (c - 1)) - sum;
-
-
 		}
 	}
 }
@@ -890,13 +814,6 @@ void fast_als::calc_ridge_regression_gpu(
 			cudaDeviceSynchronize();
 		}
 
-
-
-
-		/*ridge_regression_kernel<<<grid_1d, block_1d>>>(thrust::raw_pointer_cast(&d_weights[0]),
-				thrust::raw_pointer_cast(&d_in_v[0]), thrust::raw_pointer_cast(&d_out_v[0]), count_rows, _count_features,
-				thrust::raw_pointer_cast(&d_g[0]), thrust::raw_pointer_cast(&d_likes_offsets[0]),
-				_als_alfa, _als_gamma, thrust::raw_pointer_cast(&errors[0]));*/
 
 		cudaDeviceSynchronize();
 		start = time(0) - start;
