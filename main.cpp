@@ -19,6 +19,7 @@ int main(int argc, char *argv[])
 	int samples_for_calc_error_users = 0;
 	int samples_for_calc_error_items = 0;
 	int count_gpu = 0;
+	int max_likes = 0;
 
 	for(int i = 1; i <  argc; i++)
 	{
@@ -80,6 +81,12 @@ int main(int argc, char *argv[])
 			i++;
 			count_gpu = atoi(argv[i]);
 		}
+		else
+		if( sarg == "--max-likes")
+		{
+			i++;
+			max_likes = atoi(argv[i]);
+		}
 	}
 
 	std::ifstream f_stream(likes_file_name.c_str() );
@@ -91,7 +98,8 @@ int main(int argc, char *argv[])
 	std::cerr << " ALS alfa -  " << als_alfa << std::endl;
 	std::cerr << " ALS count GPU -  " << count_gpu << std::endl;
 
-	fast_als als_alg(in, features_size, als_alfa, 100, csimples, likes_format, samples_for_calc_error_users, samples_for_calc_error_items, count_gpu);
+	fast_als als_alg(in, features_size, als_alfa, 100, csimples, likes_format, samples_for_calc_error_users, samples_for_calc_error_items,
+			count_gpu, max_likes);
 
 	struct timeval t1;
 	struct timeval t2;

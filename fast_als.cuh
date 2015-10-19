@@ -46,7 +46,8 @@ public:
 			int likes_format,
 			int count_error_samples_for_users,
 			int count_error_samples_for_items,
-			int count_gpus);
+			int count_gpus,
+			int max_likes);
 
 	virtual ~fast_als();
 
@@ -104,14 +105,13 @@ protected:
 	///
 	void solve(
 			const likes_vector::const_iterator& likes,
-			const std::vector<float>& weights,
+			const likes_weights_vector::const_iterator& weights,
 			const features_vector& in_v,
 			int in_size,
 			features_vector& out_v,
 			int out_size,
 			int _count_features_local,
 			std::vector<int>& likes_offsets,
-			int max_likes_size,
 			int features_local_offset = 0,
 			int out_offset = 0);
 
@@ -125,14 +125,13 @@ protected:
 
 	void calc_ridge_regression_gpu(
 				const likes_vector::const_iterator& likes,
-				const std::vector<float>& weights,
+				const likes_weights_vector::const_iterator& weights,
 				const features_vector& in_v,
 				features_vector& out_v,
 				int out_size,
 				features_vector& g,
 				std::vector<int>& likes_offsets,
-				int out_offset,
-				int max_likes_size);
+				int out_offset);
 
 	void generate_test_set();
 
@@ -166,11 +165,8 @@ private:
 	std::vector<int> d_user_offsets;
 	std::vector<int> d_item_offsets;
 
-	std::vector<float> _user_weights;
-	std::vector<float> _item_weights;
 
-	int max_likes_users;
-	int max_likes_items;
+	int _max_likes;
 
 
 	std::vector<float> YxY;
