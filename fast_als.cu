@@ -12,7 +12,6 @@
 
 #define BLOCK_SIZE 16
 #define COUNT_ROWS_START 10
-#define COUNT_ROWS_ADD 100
 
 
 void checkStatus(culaStatus status)
